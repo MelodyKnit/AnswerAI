@@ -14,6 +14,7 @@ from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
 from app.models.user import ReviewItem, ReviewLog, User
 from app.schemas.teacher import AIQuestionGenerateRequest, AIQuestionReviewRequest, AIScoreRequest, ClassCreateRequest, DeleteRequest, ExamActionRequest, ExamCreateRequest, ExamUpdateRequest, ImportQuestionsRequest, QuestionCreateRequest, QuestionUpdateRequest, ReviewSubmitRequest
 from app.services.realtime import realtime_events, submission_channel
+from app.services.llm import generate_questions_with_llm
 from app.services.scoring import SUBJECTIVE_TYPES, serialize_answer
 from app.services.tasks import complete_ai_task, create_ai_task, mark_ai_task_running, queue_ai_task
 
@@ -311,21 +312,20 @@ def ai_generate_questions(payload: AIQuestionGenerateRequest, current_user: User
         request_payload=payload.model_dump(),
     )
     mark_ai_task_running(db, task, progress=35)
+    generated = generate_questions_with_llm(payload)
     complete_ai_task(
         db,
         task,
-        result_payload={
-            "questions": [
-                {
-                    "subject": payload.subject,
-                    "type": payload.question_type,
-                    "stem": f"AI 生成示例题：{payload.knowledge_points[0] if payload.knowledge_points else '综合题'}",
-                    "analysis": "当前为第一阶段占位结果，后续接入大模型。",
-                }
-            ]
-        },
+        result_payload=generated,
     )
-    return success_response({"questions": task.result_payload["questions"], "task_id": task.task_id})
+    return success_response(
+        {
+            "questions": task.result_payload.get("questions", []),
+            "used_model": task.result_payload.get("used_model"),
+            "model_errors": task.result_payload.get("model_errors", []),
+            "task_id": task.task_id,
+        }
+    )
 
 
 @router.post("/teacher/questions/ai-review")

@@ -2,6 +2,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict, BaseSettings
 
 
@@ -13,6 +14,15 @@ ENV_FILES = {
     "prod": BASE_DIR / ".env.prod",
 }
 DEFAULT_ENV_FILE = ENV_FILES.get(APP_ENV, ENV_FILES["dev"])
+
+
+class LLMConfig(BaseModel):
+    name: str
+    url: str
+    key: str
+    model: str
+    supports_functools: bool = False
+    multi_modal: bool = False
 
 
 class Settings(BaseSettings):
@@ -27,7 +37,7 @@ class Settings(BaseSettings):
     secret_key: str = "change-this-secret-key-in-production"
     access_token_expire_minutes: int = 60 * 24
     database_url: str = f"sqlite:///{(DATA_DIR / 'app.db').as_posix()}"
-    openai_api_key: str | None = None
+    llm_configs: list[LLMConfig] = Field(default_factory=list)
     debug: bool = True
 
 

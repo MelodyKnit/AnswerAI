@@ -54,9 +54,10 @@ class ImportQuestionsRequest(BaseModel):
 
 class AIQuestionGenerateRequest(BaseModel):
     subject: str
-    grade_name: str
+    grade_name: str | None = None
     question_type: str
-    knowledge_points: list[str]
+    requirement: str
+    knowledge_points: list[str] = []
     difficulty: float | None = None
     count: int = 1
     with_analysis: bool = True

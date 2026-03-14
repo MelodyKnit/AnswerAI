@@ -39,6 +39,7 @@ eggs/
 lib64/
 parts/
 sdist/
+backend/data/
 var/
 wheels/
 pip-wheel-metadata/
@@ -128,9 +129,8 @@ celerybeat.pid
 
 # Environments
 .vscode
-.env.prod
+.env.dev
 .venv
-backend/.env.prod
 env/
 venv/
 ENV/
