@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import HelloWorld from './components/HelloWorld.vue'
+import { RouterView } from 'vue-router'
 </script>
 
 <template>
-  <HelloWorld />
+  <RouterView v-slot="{ Component, route }">
+    <Transition name="page-enter" mode="out-in">
+      <component :is="Component" :key="route.fullPath" />
+    </Transition>
+  </RouterView>
 </template>

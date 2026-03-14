@@ -21,6 +21,72 @@ from app.services.tasks import complete_ai_task, create_ai_task, mark_ai_task_ru
 router = APIRouter()
 
 
+@router.get("/teacher/dashboard/overview")
+def get_teacher_dashboard_overview(
+    subject: str | None = None,
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    exam_query = select(Exam.id).where(Exam.created_by == current_user.id)
+    if subject:
+        subject_obj = db.scalar(select(Subject).where(Subject.name == subject))
+        if subject_obj is None:
+            return success_response(
+                {
+                    "exam_count": 0,
+                    "pending_review_count": 0,
+                    "risk_student_count": 0,
+                    "avg_score_trend": [],
+                    "ai_class_summary": "当前学科下暂无考试数据。",
+                }
+            )
+        exam_query = exam_query.where(Exam.subject_id == subject_obj.id)
+
+    exam_ids = list(db.scalars(exam_query).all())
+    if not exam_ids:
+        return success_response(
+            {
+                "exam_count": 0,
+                "pending_review_count": 0,
+                "risk_student_count": 0,
+                "avg_score_trend": [],
+                "ai_class_summary": "当前暂无考试数据，建议先创建并发布考试。",
+            }
+        )
+
+    pending_review_count = db.scalar(
+        select(func.count()).select_from(ReviewItem).where(ReviewItem.exam_id.in_(exam_ids), ReviewItem.review_status == "pending")
+    ) or 0
+
+    risk_student_count = db.scalar(
+        select(func.count(func.distinct(ExamSubmission.student_id))).where(ExamSubmission.exam_id.in_(exam_ids), ExamSubmission.total_score < 60)
+    ) or 0
+
+    trend_rows = db.execute(
+        select(
+            ExamSubmission.exam_id,
+            func.avg(ExamSubmission.total_score).label("avg_score"),
+            func.max(ExamSubmission.submitted_at).label("latest_submitted_at"),
+        )
+        .where(ExamSubmission.exam_id.in_(exam_ids))
+        .group_by(ExamSubmission.exam_id)
+        .order_by(func.max(ExamSubmission.submitted_at).desc())
+        .limit(6)
+    ).all()
+
+    avg_score_trend = [{"exam_id": row.exam_id, "avg_score": round(float(row.avg_score or 0), 2)} for row in reversed(trend_rows)]
+
+    return success_response(
+        {
+            "exam_count": len(exam_ids),
+            "pending_review_count": pending_review_count,
+            "risk_student_count": risk_student_count,
+            "avg_score_trend": avg_score_trend,
+            "ai_class_summary": f"已创建 {len(exam_ids)} 场考试，当前待批阅 {pending_review_count} 份，风险学生 {risk_student_count} 人。",
+        }
+    )
+
+
 @router.get("/teacher/classes")
 def list_classes(
     page: int = Query(1, ge=1),
