@@ -9,6 +9,9 @@ from app.schemas.teacher import AIQuestionGenerateRequest
 
 
 def generate_questions_with_llm(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
+    """
+    处理 generate questions with llm 请求并返回结果。
+    """
     model_errors: list[dict[str, str]] = []
 
     for cfg in settings.llm_configs:
@@ -31,6 +34,9 @@ def generate_questions_with_llm(payload: AIQuestionGenerateRequest) -> dict[str,
 
 
 def _call_single_model(cfg, payload: AIQuestionGenerateRequest) -> list[dict[str, Any]]:
+    """
+    处理  call single model 请求并返回结果。
+    """
     client = OpenAI(base_url=cfg.url, api_key=cfg.key)
     prompt = _build_prompt(payload)
     completion = client.chat.completions.create(
@@ -50,6 +56,9 @@ def _call_single_model(cfg, payload: AIQuestionGenerateRequest) -> list[dict[str
 
 
 def _build_prompt(payload: AIQuestionGenerateRequest) -> str:
+    """
+    处理  build prompt 请求并返回结果。
+    """
     kp_text = "、".join(payload.knowledge_points) if payload.knowledge_points else "综合能力"
     difficulty = payload.difficulty if payload.difficulty is not None else 0.5
     return (
@@ -68,6 +77,9 @@ def _build_prompt(payload: AIQuestionGenerateRequest) -> str:
 
 
 def _extract_json(raw: str) -> Any:
+    """
+    处理  extract json 请求并返回结果。
+    """
     if not raw:
         raise ValueError("模型返回为空")
 
@@ -84,6 +96,9 @@ def _extract_json(raw: str) -> Any:
 
 
 def _normalize_question(item: dict[str, Any], payload: AIQuestionGenerateRequest) -> dict[str, Any]:
+    """
+    处理  normalize question 请求并返回结果。
+    """
     q_type = str(item.get("type") or payload.question_type)
     stem = str(item.get("stem") or "").strip()
     analysis = str(item.get("analysis") or "").strip()
@@ -111,6 +126,9 @@ def _normalize_question(item: dict[str, Any], payload: AIQuestionGenerateRequest
 
 
 def _normalize_options(options: Any) -> list[dict[str, str]]:
+    """
+    处理  normalize options 请求并返回结果。
+    """
     if not isinstance(options, list):
         options = []
 
@@ -136,6 +154,9 @@ def _normalize_options(options: Any) -> list[dict[str, str]]:
 
 
 def _normalize_answer(q_type: str, answer: Any, options: list[dict[str, str]]) -> Any:
+    """
+    处理  normalize answer 请求并返回结果。
+    """
     if q_type == "multiple_choice":
         if isinstance(answer, list):
             picked = [str(x).strip().upper() for x in answer if str(x).strip()]
@@ -171,6 +192,9 @@ def _normalize_answer(q_type: str, answer: Any, options: list[dict[str, str]]) -
 
 
 def _fallback_question(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
+    """
+    处理  fallback question 请求并返回结果。
+    """
     kp = payload.knowledge_points[0] if payload.knowledge_points else "综合能力"
     q_type = payload.question_type
 

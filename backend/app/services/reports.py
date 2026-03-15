@@ -14,6 +14,9 @@ def build_report_payload(
     student_id: int | None = None,
     title: str | None = None,
 ) -> tuple[str, str, dict]:
+    """
+    处理 build report payload 请求并返回结果。
+    """
     if report_type == "exam":
         exam = db.get(Exam, exam_id)
         if not exam:
@@ -101,6 +104,9 @@ def build_report_payload(
 
 
 def serialize_report(report: Report) -> dict:
+    """
+    处理 serialize report 请求并返回结果。
+    """
     return {
         "id": report.id,
         "report_type": report.report_type,

@@ -26,6 +26,13 @@ async def upload_image(
     file: UploadFile = File(...),
     current_user: User = Depends(require_role("teacher")),
 ):
+    """
+    处理图片上传请求
+    
+    允许教师角色上传图片内容（如：题目插图等）。
+    支持格式：jpg/png/webp/gif，最大不能超过 8MB。
+    返回上传成功后的文件名、类型、大小以及访问URL。
+    """
     del current_user
 
     content_type = file.content_type or ""

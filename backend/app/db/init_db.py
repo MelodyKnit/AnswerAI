@@ -17,6 +17,9 @@ DEFAULT_SUBJECTS = [
 
 
 def seed_subjects(db: Session) -> None:
+    """
+    处理 seed subjects 请求并返回结果。
+    """
     if not inspect(engine).has_table("subjects"):
         return
 

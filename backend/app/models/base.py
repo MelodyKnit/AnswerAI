@@ -5,6 +5,9 @@ from sqlalchemy import DateTime
 
 
 def utcnow() -> datetime:
+    """
+    处理 utcnow 请求并返回结果。
+    """
     return datetime.now(UTC)
 
 

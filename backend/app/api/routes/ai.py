@@ -14,6 +14,9 @@ router = APIRouter()
 
 @router.get("/ai/tasks/status")
 def get_task_status(task_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    获取 task status 相关数据。
+    """
     task = db.scalar(select(AITask).where(AITask.task_id == task_id, AITask.created_by == current_user.id))
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
@@ -22,5 +25,8 @@ def get_task_status(task_id: str, current_user: User = Depends(get_current_user)
 
 @router.post("/ai/tasks/status/batch")
 def get_task_status_batch(payload: TaskStatusBatchRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    获取 task status batch 相关数据。
+    """
     tasks = db.scalars(select(AITask).where(AITask.task_id.in_(payload.task_ids), AITask.created_by == current_user.id)).all()
     return success_response({"tasks": [serialize_ai_task(task) for task in tasks]})

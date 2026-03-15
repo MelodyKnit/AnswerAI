@@ -28,6 +28,9 @@ def get_teacher_dashboard_overview(
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
+    """
+    获取 teacher dashboard overview 相关数据。
+    """
     exam_query = select(Exam.id).where(Exam.created_by == current_user.id)
     if subject:
         subject_obj = db.scalar(select(Subject).where(Subject.name == subject))
@@ -95,6 +98,9 @@ def list_classes(
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
+    """
+    列出 classes 的数据列表。
+    """
     query = select(ClassRoom).where(ClassRoom.teacher_id == current_user.id)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     items = db.scalars(query.offset((page - 1) * page_size).limit(page_size)).all()
@@ -111,6 +117,9 @@ def list_classes(
 
 @router.post("/teacher/classes/create")
 def create_class(payload: ClassCreateRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    创建新的 class 记录。
+    """
     invite_code = f"CLS-{uuid4().hex[:6].upper()}"
     classroom = ClassRoom(
         teacher_id=current_user.id,
@@ -129,6 +138,9 @@ def create_class(payload: ClassCreateRequest, current_user: User = Depends(requi
 
 @router.get("/teacher/classes/detail")
 def get_class_detail(class_id: int, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    获取 class detail 相关数据。
+    """
     classroom = _get_teacher_class(db, current_user.id, class_id)
     exam_count = db.scalar(
         select(func.count()).select_from(ExamClass).join(Exam, Exam.id == ExamClass.exam_id).where(ExamClass.class_id == class_id, Exam.created_by == current_user.id)
@@ -146,6 +158,9 @@ def get_class_students(
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
+    """
+    获取 class students 相关数据。
+    """
     _get_teacher_class(db, current_user.id, class_id)
     query = select(User).join(ClassStudent, ClassStudent.student_id == User.id).where(ClassStudent.class_id == class_id, ClassStudent.status == "active")
     if keyword:
@@ -167,6 +182,9 @@ def get_class_students(
 
 @router.post("/teacher/classes/students/invite")
 def invite_student_to_class(payload: ClassInviteRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 invite student to class 请求并返回结果。
+    """
     classroom = _get_teacher_class(db, current_user.id, payload.class_id)
 
     student = db.get(User, payload.student_id)
@@ -224,6 +242,9 @@ def invite_student_to_class(payload: ClassInviteRequest, current_user: User = De
 
 @router.post("/teacher/classes/students/remove")
 def remove_student_from_class(payload: ClassInviteRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 remove student from class 请求并返回结果。
+    """
     classroom = _get_teacher_class(db, current_user.id, payload.class_id)
 
     relation = db.scalar(
@@ -262,6 +283,9 @@ def remove_student_from_class(payload: ClassInviteRequest, current_user: User = 
 
 @router.get("/teacher/students/detail")
 def get_student_detail(student_id: int, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    获取 student detail 相关数据。
+    """
     student = db.get(User, student_id)
     if not student or student.role != "student":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
@@ -295,6 +319,9 @@ def list_questions(
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
+    """
+    列出 questions 的数据列表。
+    """
     query = select(Question).where(Question.created_by == current_user.id)
     if subject:
         subject_obj = db.scalar(select(Subject).where(Subject.name == subject))
@@ -318,6 +345,9 @@ def list_questions(
 
 @router.post("/teacher/questions/create")
 def create_question(payload: QuestionCreateRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    创建新的 question 记录。
+    """
     subject_obj = _get_subject_by_name(db, payload.subject)
     question = Question(
         created_by=current_user.id,
@@ -341,6 +371,9 @@ def create_question(payload: QuestionCreateRequest, current_user: User = Depends
 
 @router.post("/teacher/questions/update")
 def update_question(payload: QuestionUpdateRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    更新已有的 question 记录。
+    """
     question = db.get(Question, payload.question_id)
     if not question or question.created_by != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
@@ -370,6 +403,9 @@ def update_question(payload: QuestionUpdateRequest, current_user: User = Depends
 
 @router.post("/teacher/questions/delete")
 def delete_question(payload: DeleteRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    删除指定的 question 记录。
+    """
     if payload.question_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="question_id is required")
     question = db.get(Question, payload.question_id)
@@ -384,6 +420,9 @@ def delete_question(payload: DeleteRequest, current_user: User = Depends(require
 
 @router.post("/teacher/questions/import")
 def import_questions(payload: ImportQuestionsRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 import questions 请求并返回结果。
+    """
     task = queue_ai_task(
         db,
         task_type="question_import",
@@ -399,6 +438,9 @@ def import_questions(payload: ImportQuestionsRequest, current_user: User = Depen
 
 @router.post("/teacher/questions/ai-generate")
 def ai_generate_questions(payload: AIQuestionGenerateRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 ai generate questions 请求并返回结果。
+    """
     task = queue_ai_task(
         db,
         task_type="ai_generate_question",
@@ -426,6 +468,9 @@ def ai_generate_questions(payload: AIQuestionGenerateRequest, current_user: User
 
 @router.post("/teacher/questions/ai-review")
 def ai_review_question(payload: AIQuestionReviewRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 ai review question 请求并返回结果。
+    """
     question = db.get(Question, payload.question_id)
     if not question or question.created_by != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
@@ -445,6 +490,9 @@ def ai_review_question(payload: AIQuestionReviewRequest, current_user: User = De
 
 @router.post("/teacher/exams/create")
 def create_exam(payload: ExamCreateRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    创建新的 exam 记录。
+    """
     subject_obj = _get_subject_by_name(db, payload.subject)
     exam = Exam(
         created_by=current_user.id,
@@ -478,6 +526,9 @@ def list_exams(
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
+    """
+    列出 exams 的数据列表。
+    """
     query = select(Exam).where(Exam.created_by == current_user.id)
     if status:
         query = query.where(Exam.status == status)
@@ -496,6 +547,9 @@ def list_exams(
 
 @router.get("/teacher/exams/detail")
 def get_exam_detail(exam_id: int, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    获取 exam detail 相关数据。
+    """
     exam = _get_teacher_exam(db, current_user.id, exam_id)
     question_items = db.scalars(select(ExamQuestion).where(ExamQuestion.exam_id == exam.id).order_by(ExamQuestion.order_no.asc())).all()
     classes = db.scalars(select(ClassRoom).join(ExamClass, ExamClass.class_id == ClassRoom.id).where(ExamClass.exam_id == exam.id)).all()
@@ -504,6 +558,9 @@ def get_exam_detail(exam_id: int, current_user: User = Depends(require_role("tea
 
 @router.get("/teacher/exams/insights")
 def get_exam_insights(exam_id: int, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    获取 exam insights 相关数据。
+    """
     exam = _get_teacher_exam(db, current_user.id, exam_id)
 
     target_students = db.scalar(
@@ -610,6 +667,9 @@ def get_exam_insights(exam_id: int, current_user: User = Depends(require_role("t
 
 @router.post("/teacher/exams/update")
 def update_exam(payload: ExamUpdateRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    更新已有的 exam 记录。
+    """
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
     data = payload.model_dump(exclude_none=True)
     class_ids = data.pop("class_ids", None)
@@ -629,6 +689,9 @@ def update_exam(payload: ExamUpdateRequest, current_user: User = Depends(require
 
 @router.post("/teacher/exams/publish")
 def publish_exam(payload: ExamActionRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 publish exam 请求并返回结果。
+    """
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
     exam.status = "published"
     exam.published_at = datetime.now(UTC)
@@ -639,6 +702,9 @@ def publish_exam(payload: ExamActionRequest, current_user: User = Depends(requir
 
 @router.post("/teacher/exams/pause")
 def pause_exam(payload: ExamActionRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 pause exam 请求并返回结果。
+    """
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
     exam.status = "draft"
     db.add(exam)
@@ -648,6 +714,9 @@ def pause_exam(payload: ExamActionRequest, current_user: User = Depends(require_
 
 @router.post("/teacher/exams/finish")
 def finish_exam(payload: ExamActionRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 finish exam 请求并返回结果。
+    """
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
     exam.status = "finished"
     exam.finished_at = datetime.now(UTC)
@@ -658,6 +727,9 @@ def finish_exam(payload: ExamActionRequest, current_user: User = Depends(require
 
 @router.post("/teacher/exams/delete")
 def delete_exam(payload: DeleteRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    删除指定的 exam 记录。
+    """
     if payload.exam_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="exam_id is required")
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
@@ -670,6 +742,9 @@ def delete_exam(payload: DeleteRequest, current_user: User = Depends(require_rol
 
 @router.post("/teacher/exams/ai-evaluate")
 def ai_evaluate_exam(payload: ExamActionRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 ai evaluate exam 请求并返回结果。
+    """
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
     questions = db.scalars(select(ExamQuestion).where(ExamQuestion.exam_id == exam.id)).all()
     evaluation = {
@@ -690,6 +765,9 @@ def ai_evaluate_exam(payload: ExamActionRequest, current_user: User = Depends(re
 
 @router.get("/teacher/review/objective-score")
 def get_objective_score(exam_id: int, submission_id: int, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    获取 objective score 相关数据。
+    """
     _get_teacher_exam(db, current_user.id, exam_id)
     submission = db.get(ExamSubmission, submission_id)
     if not submission or submission.exam_id != exam_id:
@@ -700,6 +778,9 @@ def get_objective_score(exam_id: int, submission_id: int, current_user: User = D
 
 @router.post("/teacher/review/ai-score")
 def ai_score(payload: AIScoreRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 ai score 请求并返回结果。
+    """
     _get_teacher_exam(db, current_user.id, payload.exam_id)
     task = queue_ai_task(
         db,
@@ -723,6 +804,9 @@ def list_review_items(
     current_user: User = Depends(require_role("teacher")),
     db: Session = Depends(get_db),
 ):
+    """
+    列出 review items 的数据列表。
+    """
     _get_teacher_exam(db, current_user.id, exam_id)
     query = select(ReviewItem).where(ReviewItem.exam_id == exam_id)
     if review_status:
@@ -734,6 +818,9 @@ def list_review_items(
 
 @router.post("/teacher/review/submit")
 def submit_review(payload: ReviewSubmitRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 submit review 请求并返回结果。
+    """
     item = db.get(ReviewItem, payload.review_item_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review item not found")
@@ -755,6 +842,9 @@ def submit_review(payload: ReviewSubmitRequest, current_user: User = Depends(req
 
 @router.post("/teacher/review/publish-results")
 def publish_results(payload: ExamActionRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    处理 publish results 请求并返回结果。
+    """
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
     submissions = db.scalars(select(ExamSubmission).where(ExamSubmission.exam_id == exam.id)).all()
     for submission in submissions:
@@ -781,6 +871,9 @@ def publish_results(payload: ExamActionRequest, current_user: User = Depends(req
 
 
 def _serialize_class(classroom: ClassRoom | None) -> dict | None:
+    """
+    序列化 class 对象为字典。
+    """
     if classroom is None:
         return None
     return {
@@ -797,6 +890,9 @@ def _serialize_class(classroom: ClassRoom | None) -> dict | None:
 
 
 def _serialize_question(db: Session, question: Question) -> dict:
+    """
+    序列化 question 对象为字典。
+    """
     options = db.scalars(select(QuestionOption).where(QuestionOption.question_id == question.id).order_by(QuestionOption.sort_order.asc())).all()
     knowledge_links = db.scalars(select(QuestionKnowledgePoint).where(QuestionKnowledgePoint.question_id == question.id)).all()
     knowledge_ids = [item.knowledge_point_id for item in knowledge_links]
@@ -821,6 +917,9 @@ def _serialize_question(db: Session, question: Question) -> dict:
 
 
 def _serialize_exam(db: Session, exam: Exam) -> dict:
+    """
+    序列化 exam 对象为字典。
+    """
     subject = db.get(Subject, exam.subject_id)
     class_ids = db.scalars(select(ExamClass.class_id).where(ExamClass.exam_id == exam.id)).all()
     question_count = db.scalar(select(func.count()).select_from(ExamQuestion).where(ExamQuestion.exam_id == exam.id)) or 0
@@ -844,6 +943,9 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
 
 
 def _serialize_exam_question(db: Session, item: ExamQuestion) -> dict:
+    """
+    序列化 exam question 对象为字典。
+    """
     question = db.get(Question, item.question_id)
     return {
         "question_id": item.question_id,
@@ -855,6 +957,9 @@ def _serialize_exam_question(db: Session, item: ExamQuestion) -> dict:
 
 
 def _serialize_review_item(item: ReviewItem) -> dict:
+    """
+    序列化 review item 对象为字典。
+    """
     return {
         "id": item.id,
         "exam_id": item.exam_id,
@@ -868,6 +973,9 @@ def _serialize_review_item(item: ReviewItem) -> dict:
 
 
 def _get_subject_by_name(db: Session, subject_name: str) -> Subject:
+    """
+    处理  get subject by name 请求并返回结果。
+    """
     subject_obj = db.scalar(select(Subject).where(Subject.name == subject_name))
     if not subject_obj:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
@@ -875,6 +983,9 @@ def _get_subject_by_name(db: Session, subject_name: str) -> Subject:
 
 
 def _get_teacher_class(db: Session, teacher_id: int, class_id: int) -> ClassRoom:
+    """
+    处理  get teacher class 请求并返回结果。
+    """
     classroom = db.scalar(select(ClassRoom).where(ClassRoom.id == class_id, ClassRoom.teacher_id == teacher_id))
     if not classroom:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
@@ -882,6 +993,9 @@ def _get_teacher_class(db: Session, teacher_id: int, class_id: int) -> ClassRoom
 
 
 def _get_teacher_exam(db: Session, teacher_id: int, exam_id: int) -> Exam:
+    """
+    处理  get teacher exam 请求并返回结果。
+    """
     exam = db.scalar(select(Exam).where(Exam.id == exam_id, Exam.created_by == teacher_id))
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
@@ -889,6 +1003,9 @@ def _get_teacher_exam(db: Session, teacher_id: int, exam_id: int) -> Exam:
 
 
 def _replace_question_relations(db: Session, question_id: int, options, knowledge_point_ids) -> None:
+    """
+    处理  replace question relations 请求并返回结果。
+    """
     if options is not None:
         db.query(QuestionOption).filter(QuestionOption.question_id == question_id).delete()
         for index, option in enumerate(options, start=1):
@@ -901,6 +1018,9 @@ def _replace_question_relations(db: Session, question_id: int, options, knowledg
 
 
 def _replace_exam_relations(db: Session, exam_id: int, class_ids, question_items) -> None:
+    """
+    处理  replace exam relations 请求并返回结果。
+    """
     if class_ids is not None:
         db.query(ExamClass).filter(ExamClass.exam_id == exam_id).delete()
         for class_id in class_ids:

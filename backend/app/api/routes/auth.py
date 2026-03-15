@@ -17,6 +17,9 @@ router = APIRouter()
 
 @router.post("/auth/register")
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    """
+    处理 register 请求并返回结果。
+    """
     existing = db.scalar(select(User).where(User.email == payload.email))
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
@@ -66,6 +69,9 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/auth/login")
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    """
+    处理 login 请求并返回结果。
+    """
     user = db.scalar(select(User).where((User.email == payload.login_id) | (User.username == payload.login_id)))
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email/username or password")
@@ -86,11 +92,17 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 
 @router.get("/auth/me")
 def me(current_user: User = Depends(get_current_user)):
+    """
+    处理 me 请求并返回结果。
+    """
     return success_response({"user": _serialize_user(current_user)})
 
 
 @router.post("/users/profile/update")
 def update_profile(payload: ProfileUpdateRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    更新已有的 profile 记录。
+    """
     for field, value in payload.model_dump(exclude_none=True).items():
         setattr(current_user, field, value)
     db.add(current_user)
@@ -101,6 +113,9 @@ def update_profile(payload: ProfileUpdateRequest, current_user: User = Depends(g
 
 @router.post("/users/password/change")
 def change_password(payload: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    处理 change password 请求并返回结果。
+    """
     if not verify_password(payload.old_password, current_user.password_hash):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Old password is incorrect")
     current_user.password_hash = get_password_hash(payload.new_password)
@@ -110,6 +125,9 @@ def change_password(payload: ChangePasswordRequest, current_user: User = Depends
 
 
 def _serialize_user(user: User) -> dict:
+    """
+    序列化 user 对象为字典。
+    """
     return {
         "id": user.id,
         "role": user.role,

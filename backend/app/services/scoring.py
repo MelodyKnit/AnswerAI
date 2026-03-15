@@ -6,6 +6,9 @@ SUBJECTIVE_TYPES = {"essay", "material", "short_answer"}
 
 
 def parse_answer(raw: str | None):
+    """
+    处理 parse answer 请求并返回结果。
+    """
     if raw is None:
         return None
     try:
@@ -15,10 +18,16 @@ def parse_answer(raw: str | None):
 
 
 def serialize_answer(value) -> str:
+    """
+    处理 serialize answer 请求并返回结果。
+    """
     return json.dumps(value, ensure_ascii=False)
 
 
 def compute_objective_score(question_type: str, standard_answer, student_answer, full_score: float) -> tuple[bool | None, float]:
+    """
+    处理 compute objective score 请求并返回结果。
+    """
     if question_type not in OBJECTIVE_TYPES:
         return None, 0.0
 

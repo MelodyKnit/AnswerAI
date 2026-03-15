@@ -16,6 +16,9 @@ class RegisterRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_username_and_password(self):
+        """
+        处理 validate username and password 请求并返回结果。
+        """
         if not any(ch.isalpha() for ch in self.username):
             raise ValueError("Username must contain letters and can include numbers")
         if self.password != self.confirm_password:

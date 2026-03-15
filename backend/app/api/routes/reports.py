@@ -21,6 +21,9 @@ def list_reports(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """
+    列出 reports 的数据列表。
+    """
     query = select(Report).where((Report.created_by == current_user.id) | (Report.student_id == current_user.id))
     if report_type:
         query = query.where(Report.report_type == report_type)
@@ -30,6 +33,9 @@ def list_reports(
 
 @router.get("/reports/detail")
 def get_report_detail(report_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    获取 report detail 相关数据。
+    """
     report = db.get(Report, report_id)
     if not report or (report.created_by != current_user.id and report.student_id != current_user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
@@ -39,6 +45,9 @@ def get_report_detail(report_id: int, current_user: User = Depends(get_current_u
 
 @router.post("/reports/generate")
 def generate_report(payload: ReportGenerateRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    处理 generate report 请求并返回结果。
+    """
     task = queue_ai_task(
         db,
         task_type="report_generate",
@@ -77,6 +86,9 @@ def generate_report(payload: ReportGenerateRequest, current_user: User = Depends
 
 @router.post("/reports/export")
 def export_report(payload: ReportActionRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    处理 export report 请求并返回结果。
+    """
     report = db.get(Report, payload.report_id)
     if not report or (report.created_by != current_user.id and report.student_id != current_user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
@@ -89,6 +101,9 @@ def export_report(payload: ReportActionRequest, current_user: User = Depends(get
 
 @router.post("/reports/share")
 def share_report(payload: ReportActionRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    处理 share report 请求并返回结果。
+    """
     report = db.get(Report, payload.report_id)
     if not report or (report.created_by != current_user.id and report.student_id != current_user.id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")

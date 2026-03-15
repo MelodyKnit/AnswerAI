@@ -14,6 +14,9 @@ from app.db.session import SessionLocal
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    处理 lifespan 请求并返回结果。
+    """
     db = SessionLocal()
     try:
         seed_subjects(db)
@@ -38,6 +41,9 @@ app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 @app.get("/health")
 def health():
+    """
+    处理 health 请求并返回结果。
+    """
     return success_response({"status": "ok"})
 
 

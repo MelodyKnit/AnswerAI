@@ -6,11 +6,17 @@ from uuid import uuid4
 
 class RealtimeEventStore:
     def __init__(self) -> None:
+        """
+        处理   init   请求并返回结果。
+        """
         self._channels: dict[str, list[dict]] = defaultdict(list)
         self._sequences: dict[str, int] = defaultdict(int)
         self._lock = Lock()
 
     def publish(self, channel: str, event: str, data: dict) -> dict:
+        """
+        处理 publish 请求并返回结果。
+        """
         with self._lock:
             self._sequences[channel] += 1
             payload = {
@@ -25,15 +31,24 @@ class RealtimeEventStore:
             return payload
 
     def read(self, channel: str, after_seq: int = 0) -> list[dict]:
+        """
+        处理 read 请求并返回结果。
+        """
         with self._lock:
             return [item for item in self._channels.get(channel, []) if item["seq"] > after_seq]
 
 
 def submission_channel(exam_id: int, submission_id: int) -> str:
+    """
+    处理 submission channel 请求并返回结果。
+    """
     return f"submission:{exam_id}:{submission_id}"
 
 
 def task_channel(task_id: str) -> str:
+    """
+    处理 task channel 请求并返回结果。
+    """
     return f"task:{task_id}"
 
 

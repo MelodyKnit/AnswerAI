@@ -18,6 +18,9 @@ def create_ai_task(
     status: str = "success",
     progress: int = 100,
 ) -> AITask:
+    """
+    创建新的 ai task 记录。
+    """
     task = AITask(
         task_id=f"task_{uuid4().hex[:12]}",
         type=task_type,
@@ -45,6 +48,9 @@ def queue_ai_task(
     created_by: int | None,
     request_payload: dict | None = None,
 ) -> AITask:
+    """
+    处理 queue ai task 请求并返回结果。
+    """
     return create_ai_task(
         db,
         task_type=task_type,
@@ -59,6 +65,9 @@ def queue_ai_task(
 
 
 def mark_ai_task_running(db: Session, task: AITask, progress: int = 10) -> AITask:
+    """
+    处理 mark ai task running 请求并返回结果。
+    """
     task.status = "processing"
     task.progress = progress
     task.finished_at = None
@@ -70,6 +79,9 @@ def mark_ai_task_running(db: Session, task: AITask, progress: int = 10) -> AITas
 
 
 def complete_ai_task(db: Session, task: AITask, result_payload: dict | None = None, progress: int = 100) -> AITask:
+    """
+    处理 complete ai task 请求并返回结果。
+    """
     task.status = "success"
     task.progress = progress
     task.result_payload = result_payload
@@ -82,6 +94,9 @@ def complete_ai_task(db: Session, task: AITask, result_payload: dict | None = No
 
 
 def fail_ai_task(db: Session, task: AITask, error_message: str) -> AITask:
+    """
+    处理 fail ai task 请求并返回结果。
+    """
     task.status = "failed"
     task.error_message = error_message
     task.finished_at = datetime.now(UTC)
@@ -93,6 +108,9 @@ def fail_ai_task(db: Session, task: AITask, error_message: str) -> AITask:
 
 
 def serialize_ai_task(task: AITask) -> dict:
+    """
+    处理 serialize ai task 请求并返回结果。
+    """
     return {
         "task_id": task.task_id,
         "type": task.type,

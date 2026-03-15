@@ -30,6 +30,9 @@ def list_student_exams(
     current_user: User = Depends(require_role("student")),
     db: Session = Depends(get_db),
 ):
+    """
+    列出 student exams 的数据列表。
+    """
     class_ids = db.scalars(select(ClassStudent.class_id).where(ClassStudent.student_id == current_user.id, ClassStudent.status == "active")).all()
     if not class_ids:
         return success_response({"items": [], "total": 0})
@@ -52,6 +55,9 @@ def list_student_exams(
 
 @router.get("/student/exams/detail")
 def get_student_exam_detail(exam_id: int, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    获取 student exam detail 相关数据。
+    """
     exam = _get_student_exam(db, current_user.id, exam_id)
     now = datetime.now(UTC)
     return success_response({"exam": _serialize_exam_detail(db, exam), "can_start": exam.start_time <= now <= exam.end_time and exam.status in {"published", "ongoing"}, "rules": {"allow_review": exam.allow_review, "random_question_order": exam.random_question_order}})
@@ -59,6 +65,12 @@ def get_student_exam_detail(exam_id: int, current_user: User = Depends(require_r
 
 @router.post("/student/exams/start")
 def start_exam(payload: StartExamRequest, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    学生开始考试接口
+    
+    验证当前学生是否具备参加该考试的权限，若首次开始则在数据库中初始化一条 ExamSubmission 记录。
+    生成初始的草稿数据并将状态设定为 in_progress。最终返回一个有效的 submission_id 供答题阶段使用。
+    """
     exam = _get_student_exam(db, current_user.id, payload.exam_id)
     relation = db.scalar(
         select(ClassStudent)
@@ -94,6 +106,9 @@ def start_exam(payload: StartExamRequest, current_user: User = Depends(require_r
 
 @router.get("/student/exams/paper")
 def get_exam_paper(exam_id: int, submission_id: int, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    获取 exam paper 相关数据。
+    """
     exam = _get_student_exam(db, current_user.id, exam_id)
     submission = _get_student_submission(db, current_user.id, submission_id)
     if submission.exam_id != exam.id:
@@ -102,6 +117,8 @@ def get_exam_paper(exam_id: int, submission_id: int, current_user: User = Depend
     questions = []
     for item in question_items:
         question = db.get(Question, item.question_id)
+        if not question:
+            continue
         options = db.scalars(select(QuestionOption).where(QuestionOption.question_id == item.question_id).order_by(QuestionOption.sort_order.asc())).all()
         questions.append({
             "question_id": question.id,
@@ -116,6 +133,9 @@ def get_exam_paper(exam_id: int, submission_id: int, current_user: User = Depend
 
 @router.post("/student/exams/answer/save")
 def save_answer(payload: SaveAnswerRequest, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    处理 save answer 请求并返回结果。
+    """
     submission = _get_student_submission(db, current_user.id, payload.submission_id)
     answer = db.scalar(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id, SubmissionAnswer.question_id == payload.question_id))
     if not answer:
@@ -139,6 +159,9 @@ def save_answer(payload: SaveAnswerRequest, current_user: User = Depends(require
 
 @router.post("/student/exams/answers/save-batch")
 def save_answers_batch(payload: BatchSaveAnswerRequest, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    处理 save answers batch 请求并返回结果。
+    """
     submission = _get_student_submission(db, current_user.id, payload.submission_id)
     saved_count = 0
     for item in payload.answers:
@@ -157,6 +180,9 @@ def save_answers_batch(payload: BatchSaveAnswerRequest, current_user: User = Dep
 
 @router.post("/student/exams/behavior/report")
 def report_behavior(payload: BehaviorReportRequest, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    处理 report behavior 请求并返回结果。
+    """
     submission = _get_student_submission(db, current_user.id, payload.submission_id)
     for event in payload.events:
         db.add(SubmissionBehaviorEvent(submission_id=submission.id, exam_id=payload.exam_id, question_id=event.question_id, event_type=event.event_type, payload=event.payload, occurred_at=event.occurred_at))
@@ -171,6 +197,9 @@ def report_behavior(payload: BehaviorReportRequest, current_user: User = Depends
 
 @router.get("/student/exams/pre-submit-check")
 def pre_submit_check(exam_id: int, submission_id: int, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    处理 pre submit check 请求并返回结果。
+    """
     _get_student_exam(db, current_user.id, exam_id)
     submission = _get_student_submission(db, current_user.id, submission_id)
     question_ids = db.scalars(select(ExamQuestion.question_id).where(ExamQuestion.exam_id == exam_id)).all()
@@ -185,6 +214,12 @@ def pre_submit_check(exam_id: int, submission_id: int, current_user: User = Depe
 
 @router.post("/student/exams/submit")
 def submit_exam(payload: SubmitExamRequest, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    学生交卷接口
+    
+    允许学生主动交卷或自动交卷。将草稿状态修改为正式提交并冻结做题修改，
+    计算客观题分数，分发 AI 评分任务，修改考试状态为已提交（或已完成，视题型而定）。
+    """
     if not payload.confirm_submit:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="confirm_submit must be true")
     exam = _get_student_exam(db, current_user.id, payload.exam_id)
@@ -245,6 +280,12 @@ def submit_exam(payload: SubmitExamRequest, current_user: User = Depends(require
 
 @router.get("/student/dashboard/overview")
 def student_dashboard(subject: str | None = None, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    学生主页概览接口
+    
+    请求学生的总览数据，包括近期待考数量、基于最近考试数据提取的薄弱知识点分析，
+    以及系统生成的个性化待办学习任务等，驱动学生控制台面板的内容呈现。
+    """
     upcoming_count = db.scalar(
         select(func.count()).select_from(Exam).join(ExamClass, ExamClass.exam_id == Exam.id).join(ClassStudent, ClassStudent.class_id == ExamClass.class_id).where(ClassStudent.student_id == current_user.id, Exam.start_time > datetime.now(UTC))
     ) or 0
@@ -269,6 +310,9 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
 
 @router.get("/student/results/overview")
 def result_overview(exam_id: int, current_user: User = Depends(require_role("student")), db: Session = Depends(get_db)):
+    """
+    处理 result overview 请求并返回结果。
+    """
     submission = db.scalar(select(ExamSubmission).where(ExamSubmission.exam_id == exam_id, ExamSubmission.student_id == current_user.id))
     if not submission:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
@@ -287,6 +331,9 @@ def result_overview(exam_id: int, current_user: User = Depends(require_role("stu
 
 
 def _get_student_exam(db: Session, student_id: int, exam_id: int) -> Exam:
+    """
+    处理  get student exam 请求并返回结果。
+    """
     class_ids = db.scalars(select(ClassStudent.class_id).where(ClassStudent.student_id == student_id, ClassStudent.status == "active")).all()
     exam = db.scalar(select(Exam).join(ExamClass, ExamClass.exam_id == Exam.id).where(Exam.id == exam_id, ExamClass.class_id.in_(class_ids)))
     if not exam:
@@ -295,6 +342,9 @@ def _get_student_exam(db: Session, student_id: int, exam_id: int) -> Exam:
 
 
 def _get_student_submission(db: Session, student_id: int, submission_id: int) -> ExamSubmission:
+    """
+    处理  get student submission 请求并返回结果。
+    """
     submission = db.scalar(select(ExamSubmission).where(ExamSubmission.id == submission_id, ExamSubmission.student_id == student_id))
     if not submission:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
@@ -302,17 +352,26 @@ def _get_student_submission(db: Session, student_id: int, submission_id: int) ->
 
 
 def _serialize_exam_list_item(db: Session, exam: Exam) -> dict:
+    """
+    序列化 exam list item 对象为字典。
+    """
     subject = db.get(Subject, exam.subject_id)
     return {"id": exam.id, "title": exam.title, "subject": subject.name if subject else None, "duration_minutes": exam.duration_minutes, "status": exam.status, "start_time": exam.start_time.isoformat(), "end_time": exam.end_time.isoformat()}
 
 
 def _serialize_exam_detail(db: Session, exam: Exam) -> dict:
+    """
+    序列化 exam detail 对象为字典。
+    """
     subject = db.get(Subject, exam.subject_id)
     question_count = db.scalar(select(func.count()).select_from(ExamQuestion).where(ExamQuestion.exam_id == exam.id)) or 0
     return {"id": exam.id, "title": exam.title, "subject": subject.name if subject else None, "duration_minutes": exam.duration_minutes, "total_score": float(exam.total_score), "status": exam.status, "start_time": exam.start_time.isoformat(), "end_time": exam.end_time.isoformat(), "instructions": exam.instructions, "question_count": question_count}
 
 
 def _serialize_submission(submission: ExamSubmission | None) -> dict | None:
+    """
+    序列化 submission 对象为字典。
+    """
     if submission is None:
         return None
     return {"id": submission.id, "exam_id": submission.exam_id, "student_id": submission.student_id, "status": submission.status, "started_at": submission.started_at.isoformat() if submission.started_at else None, "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None, "deadline_at": submission.deadline_at.isoformat() if submission.deadline_at else None, "objective_score": float(submission.objective_score), "subjective_score": float(submission.subjective_score), "total_score": float(submission.total_score), "correct_rate": submission.correct_rate, "ranking_in_class": submission.ranking_in_class}

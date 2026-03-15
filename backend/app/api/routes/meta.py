@@ -32,22 +32,34 @@ GRADES = [
 
 @router.get("/meta/subjects")
 def get_subjects(db: Session = Depends(get_db)):
+    """
+    获取 subjects 相关数据。
+    """
     items = db.scalars(select(Subject).where(Subject.status == "active").order_by(Subject.sort_order.asc())).all()
     return success_response({"items": [{"id": item.id, "code": item.code, "name": item.name} for item in items]})
 
 
 @router.get("/meta/grades")
 def get_grades():
+    """
+    获取 grades 相关数据。
+    """
     return success_response({"items": GRADES})
 
 
 @router.get("/meta/question-types")
 def get_question_types():
+    """
+    获取 question types 相关数据。
+    """
     return success_response({"items": QUESTION_TYPES})
 
 
 @router.get("/meta/knowledge-points/tree")
 def get_knowledge_tree(subject: str, db: Session = Depends(get_db)):
+    """
+    获取 knowledge tree 相关数据。
+    """
     subject_obj = db.scalar(select(Subject).where(Subject.name == subject))
     if not subject_obj:
         return success_response({"items": []})

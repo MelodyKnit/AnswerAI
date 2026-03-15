@@ -8,6 +8,9 @@ from app.models.user import StudentProfileSnapshot, StudyPlan, StudyTask
 
 
 def build_submission_analysis(db: Session, submission: ExamSubmission, exam: Exam) -> dict:
+    """
+    处理 build submission analysis 请求并返回结果。
+    """
     answers = db.scalars(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id)).all()
     wrong_answers = [item for item in answers if item.is_correct is False]
     knowledge_counter: dict[int, int] = {}
@@ -43,6 +46,9 @@ def build_submission_analysis(db: Session, submission: ExamSubmission, exam: Exa
 
 
 def generate_study_plan(db: Session, submission: ExamSubmission, exam: Exam) -> dict:
+    """
+    处理 generate study plan 请求并返回结果。
+    """
     subject = db.get(Subject, exam.subject_id)
     wrong_answers = db.scalars(
         select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id, SubmissionAnswer.is_correct.is_(False))
