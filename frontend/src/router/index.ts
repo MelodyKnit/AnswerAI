@@ -21,6 +21,9 @@ import TeacherExamCreateView from '../views/teacher/TeacherExamCreateView.vue'
 import TeacherQuestionsView from '../views/teacher/TeacherQuestionsView.vue'
 import TeacherReviewView from '../views/teacher/TeacherReviewView.vue'
 import TeacherSettingsView from '../views/teacher/TeacherSettingsView.vue'
+import TeacherSettingsProfileView from '../views/teacher/TeacherSettingsProfileView.vue'
+import TeacherSettingsNotificationsView from '../views/teacher/TeacherSettingsNotificationsView.vue'
+import TeacherSettingsSecurityView from '../views/teacher/TeacherSettingsSecurityView.vue'
 import TeacherClassCreateView from '../views/teacher/TeacherClassCreateView.vue'
 import TeacherClassesView from '../views/teacher/TeacherClassesView.vue'
 import TeacherClassDetailView from '../views/teacher/TeacherClassDetailView.vue'
@@ -207,6 +210,24 @@ const router = createRouter({
           name: 'teacher-settings',
           component: TeacherSettingsView,
           meta: { title: '设置', section: 'teacher' }
+        },
+        {
+          path: 'teacher/settings/profile',
+          name: 'teacher-settings-profile',
+          component: TeacherSettingsProfileView,
+          meta: { title: '个人资料', section: 'teacher', hideNav: true }
+        },
+        {
+          path: 'teacher/settings/notifications',
+          name: 'teacher-settings-notifications',
+          component: TeacherSettingsNotificationsView,
+          meta: { title: '消息通知', section: 'teacher', hideNav: true }
+        },
+        {
+          path: 'teacher/settings/security',
+          name: 'teacher-settings-security',
+          component: TeacherSettingsSecurityView,
+          meta: { title: '账号与安全', section: 'teacher', hideNav: true }
         },
           {
             path: 'system/foundation',

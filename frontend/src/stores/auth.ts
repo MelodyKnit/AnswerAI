@@ -36,5 +36,16 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('token')
   }
 
-  return { token, user, login, register, fetchUser, logout }
+  const setUser = (nextUser: any) => {
+    user.value = nextUser
+  }
+
+  const patchUser = (patch: Record<string, unknown>) => {
+    user.value = {
+      ...(user.value || {}),
+      ...patch,
+    }
+  }
+
+  return { token, user, login, register, fetchUser, logout, setUser, patchUser }
 })

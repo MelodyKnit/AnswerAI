@@ -31,11 +31,24 @@ http.interceptors.response.use(
       localStorage.removeItem('token')
       window.location.href = '/app/auth'
     }
-    // Also attach message for unprocessable entities
-    if (error.response && error.response.status === 422) {
-      return Promise.reject(new Error("参数错误或密码长度不够(请确保密码至少8位并且邮箱格式正确)"))
+
+    const detail = error?.response?.data?.detail
+    if (typeof detail === 'string' && detail.trim()) {
+      return Promise.reject(new Error(detail))
     }
-    return Promise.reject(error)
+
+    if (Array.isArray(detail) && detail.length > 0) {
+      const first = detail[0]
+      if (first?.msg) {
+        return Promise.reject(new Error(String(first.msg)))
+      }
+    }
+
+    if (error?.message) {
+      return Promise.reject(new Error(String(error.message)))
+    }
+
+    return Promise.reject(new Error('请求失败，请稍后重试'))
   }
 )
 

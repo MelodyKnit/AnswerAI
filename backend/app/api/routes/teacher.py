@@ -3,7 +3,7 @@ from datetime import datetime, UTC
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role
@@ -12,7 +12,7 @@ from app.models.academic import ClassRoom, ClassStudent, KnowledgePoint, Subject
 from app.models.exam import Exam, ExamClass, ExamQuestion, ExamSubmission, SubmissionAnswer
 from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
 from app.models.user import ReviewItem, ReviewLog, User
-from app.schemas.teacher import AIQuestionGenerateRequest, AIQuestionReviewRequest, AIScoreRequest, ClassCreateRequest, DeleteRequest, ExamActionRequest, ExamCreateRequest, ExamUpdateRequest, ImportQuestionsRequest, QuestionCreateRequest, QuestionUpdateRequest, ReviewSubmitRequest
+from app.schemas.teacher import AIQuestionGenerateRequest, AIQuestionReviewRequest, AIScoreRequest, ClassCreateRequest, ClassInviteRequest, DeleteRequest, ExamActionRequest, ExamCreateRequest, ExamUpdateRequest, ImportQuestionsRequest, QuestionCreateRequest, QuestionUpdateRequest, ReviewSubmitRequest
 from app.services.realtime import realtime_events, submission_channel
 from app.services.llm import generate_questions_with_llm
 from app.services.scoring import SUBJECTIVE_TYPES, serialize_answer
@@ -158,10 +158,106 @@ def get_class_students(
             "id": item.id,
             "name": item.name,
             "email": item.email,
+            "phone": item.phone,
             "grade_name": item.grade_name,
             "risk_level": risk_level or "unknown",
         })
     return success_response({"items": serialized, "total": total})
+
+
+@router.post("/teacher/classes/students/invite")
+def invite_student_to_class(payload: ClassInviteRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    classroom = _get_teacher_class(db, current_user.id, payload.class_id)
+
+    student = db.get(User, payload.student_id)
+    if not student or student.role != "student":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+
+    relation = db.scalar(
+        select(ClassStudent).where(
+            ClassStudent.class_id == classroom.id,
+            ClassStudent.student_id == student.id,
+            ClassStudent.teacher_id == current_user.id,
+        )
+    )
+
+    if relation and relation.status == "active":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student already in class")
+
+    if relation and relation.status != "active":
+        relation.status = "active"
+        db.add(relation)
+    else:
+        db.add(
+            ClassStudent(
+                class_id=classroom.id,
+                student_id=student.id,
+                teacher_id=current_user.id,
+                status="active",
+            )
+        )
+
+    active_count = db.scalar(
+        select(func.count()).select_from(ClassStudent).where(
+            ClassStudent.class_id == classroom.id,
+            ClassStudent.status == "active",
+        )
+    ) or 0
+    classroom.student_count = int(active_count) + 1
+    db.add(classroom)
+    db.commit()
+
+    return success_response(
+        {
+            "class_id": classroom.id,
+            "student": {
+                "id": student.id,
+                "name": student.name,
+                "email": student.email,
+                "phone": student.phone,
+            },
+            "student_count": classroom.student_count,
+        },
+        "student invited",
+    )
+
+
+@router.post("/teacher/classes/students/remove")
+def remove_student_from_class(payload: ClassInviteRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    classroom = _get_teacher_class(db, current_user.id, payload.class_id)
+
+    relation = db.scalar(
+        select(ClassStudent).where(
+            ClassStudent.class_id == classroom.id,
+            ClassStudent.student_id == payload.student_id,
+            ClassStudent.teacher_id == current_user.id,
+            ClassStudent.status == "active",
+        )
+    )
+    if not relation:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student is not in this class")
+
+    relation.status = "inactive"
+    db.add(relation)
+
+    active_count = db.scalar(
+        select(func.count()).select_from(ClassStudent).where(
+            ClassStudent.class_id == classroom.id,
+            ClassStudent.status == "active",
+        )
+    ) or 0
+    classroom.student_count = max(0, int(active_count) - 1)
+    db.add(classroom)
+
+    db.commit()
+    return success_response(
+        {
+            "class_id": classroom.id,
+            "student_id": payload.student_id,
+            "student_count": classroom.student_count,
+        },
+        "student removed",
+    )
 
 
 @router.get("/teacher/students/detail")
@@ -404,6 +500,112 @@ def get_exam_detail(exam_id: int, current_user: User = Depends(require_role("tea
     question_items = db.scalars(select(ExamQuestion).where(ExamQuestion.exam_id == exam.id).order_by(ExamQuestion.order_no.asc())).all()
     classes = db.scalars(select(ClassRoom).join(ExamClass, ExamClass.class_id == ClassRoom.id).where(ExamClass.exam_id == exam.id)).all()
     return success_response({"exam": _serialize_exam(db, exam), "question_items": [_serialize_exam_question(db, item) for item in question_items], "classes": [_serialize_class(item) for item in classes]})
+
+
+@router.get("/teacher/exams/insights")
+def get_exam_insights(exam_id: int, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    exam = _get_teacher_exam(db, current_user.id, exam_id)
+
+    target_students = db.scalar(
+        select(func.count(func.distinct(ClassStudent.student_id)))
+        .select_from(ClassStudent)
+        .join(ExamClass, ExamClass.class_id == ClassStudent.class_id)
+        .where(
+            ExamClass.exam_id == exam.id,
+            ClassStudent.teacher_id == current_user.id,
+            ClassStudent.status == "active",
+        )
+    ) or 0
+
+    submissions = db.scalars(select(ExamSubmission).where(ExamSubmission.exam_id == exam.id)).all()
+    submitted_statuses = {"submitted", "reviewed"}
+    submitted_submissions = [item for item in submissions if item.status in submitted_statuses]
+    active_submissions = [item for item in submissions if item.status in {"in_progress", "submitted", "reviewed"}]
+    submitted_count = len(active_submissions)
+    completion_rate = round((submitted_count / target_students) if target_students else 0, 4)
+
+    duration_samples: list[float] = []
+    for item in submitted_submissions:
+        if item.started_at and item.submitted_at and item.submitted_at >= item.started_at:
+            duration_minutes = (item.submitted_at - item.started_at).total_seconds() / 60
+            duration_samples.append(duration_minutes)
+    avg_duration_minutes = round(sum(duration_samples) / len(duration_samples), 1) if duration_samples else 0.0
+
+    avg_score = round(
+        float(sum(float(item.total_score or 0) for item in submitted_submissions) / len(submitted_submissions)),
+        2,
+    ) if submitted_submissions else 0.0
+
+    answer_rows = db.execute(
+        select(
+            SubmissionAnswer.question_id,
+            func.count(SubmissionAnswer.id).label("answer_count"),
+            func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).label("wrong_count"),
+            func.avg(SubmissionAnswer.spent_seconds).label("avg_spent_seconds"),
+        )
+        .where(SubmissionAnswer.exam_id == exam.id, SubmissionAnswer.is_correct.is_not(None))
+        .group_by(SubmissionAnswer.question_id)
+    ).all()
+
+    question_insights: list[dict] = []
+    total_answers = 0
+    total_wrong = 0
+    for row in answer_rows:
+        answer_count = int(row.answer_count or 0)
+        wrong_count = int(row.wrong_count or 0)
+        total_answers += answer_count
+        total_wrong += wrong_count
+        wrong_rate = round((wrong_count / answer_count), 4) if answer_count else 0
+        question = db.get(Question, row.question_id)
+        question_insights.append(
+            {
+                "question_id": row.question_id,
+                "stem": question.stem if question else "题目缺失",
+                "answer_count": answer_count,
+                "wrong_count": wrong_count,
+                "wrong_rate": wrong_rate,
+                "avg_spent_seconds": round(float(row.avg_spent_seconds or 0), 1),
+            }
+        )
+
+    question_insights.sort(key=lambda x: x["wrong_rate"], reverse=True)
+    top_wrong_questions = question_insights[:3]
+    overall_wrong_rate = round((total_wrong / total_answers), 4) if total_answers else 0
+
+    easy_mistakes: list[str] = []
+    teaching_suggestions: list[str] = []
+    if completion_rate < 0.4:
+        easy_mistakes.append("当前作答覆盖偏低，学生可能未进入考试或提醒触达不足。")
+        teaching_suggestions.append("建议先在班级群进行一次集中提醒，并设置明确截止时段。")
+    if top_wrong_questions and top_wrong_questions[0]["wrong_rate"] >= 0.6:
+        easy_mistakes.append("头部错题错误率较高，可能存在知识点理解断层。")
+        teaching_suggestions.append("建议围绕最高错题组织 10 分钟微讲解，并布置同类 2-3 题跟练。")
+    if avg_duration_minutes > float(exam.duration_minutes or 0) * 0.9 and submitted_submissions:
+        easy_mistakes.append("平均用时接近考试时长上限，存在时间分配压力。")
+        teaching_suggestions.append("建议强化限时训练和先易后难策略，降低后程失分。")
+    if not easy_mistakes:
+        easy_mistakes.append("整体作答数据平稳，暂未出现明显异常。")
+        teaching_suggestions.append("可继续按章节迭代小测，维持学习节奏与诊断闭环。")
+
+    return success_response(
+        {
+            "progress": {
+                "submitted_count": submitted_count,
+                "target_count": target_students,
+                "completion_rate": completion_rate,
+            },
+            "learning": {
+                "avg_duration_minutes": avg_duration_minutes,
+                "avg_score": avg_score,
+                "overall_wrong_rate": overall_wrong_rate,
+            },
+            "top_wrong_questions": top_wrong_questions,
+            "ai_summary": {
+                "easy_mistakes": easy_mistakes,
+                "teaching_suggestions": teaching_suggestions,
+            },
+        }
+    )
 
 
 @router.post("/teacher/exams/update")

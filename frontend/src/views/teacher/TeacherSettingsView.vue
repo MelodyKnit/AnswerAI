@@ -1,174 +1,173 @@
 <script setup lang="ts">
-import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
-import { LogOut, User, Bell, Shield, ChevronRight } from 'lucide-vue-next'
+import { Bell, ChevronRight, LogOut, Shield, User } from 'lucide-vue-next'
+import { useAuthStore } from '@/stores/auth'
 
-const authStore = useAuthStore()
 const router = useRouter()
+const authStore = useAuthStore()
+
+const goToProfile = () => router.push('/app/teacher/settings/profile')
+const goToNotification = () => router.push('/app/teacher/settings/notifications')
+const goToSecurity = () => router.push('/app/teacher/settings/security')
 
 const handleLogout = () => {
+  const confirmed = window.confirm('确认退出登录吗？')
+  if (!confirmed) return
   authStore.logout()
   router.push('/app/auth')
 }
 </script>
 
 <template>
-  <div class="view-settings">
+  <div class="settings-home">
     <header class="page-header">
       <h1 class="page-title">设置</h1>
+      <p class="page-subtitle">点击进入对应页面进行详细设置。</p>
     </header>
 
-    <div class="user-profile">
-      <div class="avatar">
-        {{ authStore.user?.name?.charAt(0) || '师' }}
-      </div>
-      <div class="user-info">
+    <section class="profile-card">
+      <div class="avatar">{{ authStore.user?.name?.charAt(0)?.toUpperCase() || '师' }}</div>
+      <div class="profile-meta">
         <h2>{{ authStore.user?.name || '未设置姓名' }}</h2>
         <p>{{ authStore.user?.email || '未绑定邮箱' }}</p>
       </div>
-    </div>
+    </section>
 
-    <div class="settings-group">
-      <div class="setting-item clickable">
-        <div class="item-left">
-          <User :size="18" class="icon" />
-          <span>个人资料</span>
-        </div>
-        <ChevronRight :size="16" class="icon-right" />
-      </div>
-      <div class="setting-item clickable">
-        <div class="item-left">
-          <Bell :size="18" class="icon" />
-          <span>消息通知</span>
-        </div>
-        <ChevronRight :size="16" class="icon-right" />
-      </div>
-      <div class="setting-item clickable">
-        <div class="item-left">
-          <Shield :size="18" class="icon" />
-          <span>账号与安全</span>
-        </div>
-        <ChevronRight :size="16" class="icon-right" />
-      </div>
-    </div>
+    <section class="menu-list">
+      <button class="menu-item" @click="goToProfile">
+        <span class="left">
+          <User :size="18" />
+          个人资料
+        </span>
+        <ChevronRight :size="16" />
+      </button>
 
-    <button class="button button--secondary logout-btn" @click="handleLogout">
-      <LogOut :size="18" />
+      <button class="menu-item" @click="goToNotification">
+        <span class="left">
+          <Bell :size="18" />
+          消息通知
+        </span>
+        <ChevronRight :size="16" />
+      </button>
+
+      <button class="menu-item" @click="goToSecurity">
+        <span class="left">
+          <Shield :size="18" />
+          账号与安全
+        </span>
+        <ChevronRight :size="16" />
+      </button>
+    </section>
+
+    <button class="logout-btn" @click="handleLogout">
+      <LogOut :size="16" />
       退出登录
     </button>
   </div>
 </template>
 
 <style scoped>
-.view-settings {
+.settings-home {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 12px;
 }
 
 .page-header {
-  padding-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .page-title {
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--ink);
-  letter-spacing: -0.02em;
+  margin: 0;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
 }
 
-.user-profile {
+.page-subtitle {
+  margin: 0;
+  color: #556278;
+  font-size: 13px;
+}
+
+.profile-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #ffffff, #f7fbff);
+  padding: 12px;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 24px;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  gap: 10px;
 }
 
 .avatar {
-  width: 56px;
-  height: 56px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
-  background: var(--accent);
+  background: linear-gradient(145deg, #0f766e, #0d9488);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-weight: 700;
   font-size: 20px;
-  font-weight: 600;
 }
 
-.user-info h2 {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--ink);
-  margin-bottom: 4px;
+.profile-meta h2 {
+  margin: 0;
+  font-size: 20px;
 }
 
-.user-info p {
-  font-size: 14px;
-  color: var(--ink-soft);
+.profile-meta p {
+  margin: 4px 0 0;
+  color: #556278;
+  font-size: 13px;
 }
 
-.settings-group {
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+.menu-list {
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
   overflow: hidden;
+  background: #fff;
 }
 
-.setting-item {
+.menu-item {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid #edf2f8;
+  background: #fff;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--line);
-  transition: background-color 0.2s;
+  justify-content: space-between;
+  padding: 14px 12px;
+  color: #0f172a;
+  font-size: 15px;
 }
 
-.setting-item:last-child {
+.menu-item:last-child {
   border-bottom: none;
 }
 
-.setting-item:hover {
-  background-color: var(--bg);
-}
-
-.item-left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 15px;
-  color: var(--ink);
-}
-
-.icon {
-  color: var(--ink-soft);
-}
-
-.icon-right {
-  color: var(--ink-soft);
-  opacity: 0.5;
-}
-
-.logout-btn {
-  margin-top: 16px;
-  color: #ef4444; /* red text for logout */
-  border-color: #fca5a5;
-  background-color: #fef2f2;
-  display: flex;
-  justify-content: center;
+.left {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
-.logout-btn:hover {
-  background-color: #fee2e2;
+.logout-btn {
+  margin-top: 6px;
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  color: #dc2626;
+  border-radius: 12px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
 }
 </style>
-
-

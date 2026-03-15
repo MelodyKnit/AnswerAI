@@ -14,26 +14,45 @@ const isLoading = ref(false)
 
 const form = ref({
   name: '',
+  username: '',
+  loginId: '',
   email: '',
   password: '',
+  confirmPassword: '',
   code: ''
 })
 
+const usernameRegex = /^(?=.*[A-Za-z])[A-Za-z0-9]+$/
+
 const handleSubmit = async () => {
   errorMsg.value = ''
+
+  if (activeMode.value === 'register') {
+    if (!usernameRegex.test(form.value.username)) {
+      errorMsg.value = '用户名必须为英文或英文+数字组合'
+      return
+    }
+    if (form.value.password !== form.value.confirmPassword) {
+      errorMsg.value = '两次输入密码不一致'
+      return
+    }
+  }
+
   isLoading.value = true
   try {
     if (activeMode.value === 'login') {
       await authStore.login({
-        email: form.value.email,
+        login_id: form.value.loginId,
         password: form.value.password
       })
     } else {
       await authStore.register({
         role: activeRole.value,
         name: form.value.name,
+        username: form.value.username,
         email: form.value.email,
         password: form.value.password,
+        confirm_password: form.value.confirmPassword,
         ...(activeRole.value === 'student' ? { class_code: form.value.code } : { teacher_invite_code: form.value.code })
       })
     }
@@ -105,13 +124,35 @@ const handleSubmit = async () => {
           </div>
 
           <div class="form-group">
-            <label for="email">邮箱地址</label>
+            <label for="login-id">邮箱或用户名</label>
+            <input
+              id="login-id"
+              type="text"
+              placeholder="请输入邮箱或用户名"
+              v-model="form.loginId"
+              required
+              v-if="activeMode === 'login'"
+            />
+            <label for="email" v-else>邮箱地址</label>
             <input 
               id="email"
               type="email" 
               placeholder="name@example.com" 
               v-model="form.email" 
               required 
+              v-if="activeMode === 'register'"
+            />
+          </div>
+
+          <div class="form-group" v-if="activeMode === 'register'">
+            <label for="username">用户名</label>
+            <input
+              id="username"
+              type="text"
+              placeholder="仅英文或英文+数字，如 student01"
+              v-model="form.username"
+              required
+              pattern="^(?=.*[A-Za-z])[A-Za-z0-9]+$"
             />
           </div>
 
@@ -125,6 +166,18 @@ const handleSubmit = async () => {
               type="password"
               placeholder="最少8位密码"
               v-model="form.password"
+              minlength="8"
+              required
+            />
+          </div>
+
+          <div class="form-group" v-if="activeMode === 'register'">
+            <label for="confirm-password">确认密码</label>
+            <input
+              id="confirm-password"
+              type="password"
+              placeholder="再次输入密码"
+              v-model="form.confirmPassword"
               minlength="8"
               required
             />

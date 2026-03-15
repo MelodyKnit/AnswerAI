@@ -30,6 +30,14 @@ export const getClassStudents = (params: { class_id: number, keyword?: string, r
   return http.get('/teacher/classes/students', { params })
 }
 
+export const inviteStudentToClass = (data: { class_id: number, student_id: number }) => {
+  return http.post('/teacher/classes/students/invite', data)
+}
+
+export const removeStudentFromClass = (data: { class_id: number, student_id: number }) => {
+  return http.post('/teacher/classes/students/remove', data)
+}
+
 export const getStudentDetail = (student_id: number) => {
   return http.get('/teacher/students/detail', { params: { student_id } })
 }
@@ -81,6 +89,10 @@ export const getExams = (params?: {
 
 export const getExamDetail = (exam_id: number) => {
   return http.get('/teacher/exams/detail', { params: { exam_id } })
+}
+
+export const getExamInsights = (exam_id: number) => {
+  return http.get('/teacher/exams/insights', { params: { exam_id } })
 }
 
 export const updateExam = (data: any) => {

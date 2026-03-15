@@ -742,6 +742,12 @@ Content-Type: application/json
 | class_ids | array | 是 | 参与班级 ID 列表 |
 | question_items | array | 是 | 题目列表，包含 question_id、score、order_no |
 
+请求约束补充：
+
+- `subject` 必须是系统中已存在的学科名称，否则返回 `404 Subject not found`。
+- `question_items` 可以为空数组，此时创建的考试总分为 `0`，后续可通过更新考试补充题目。
+- 前端若收到 `422`，应直接展示后端返回的 `detail` 字段，不应替换为固定文案。
+
 返回参数：
 
 | 字段 | 类型 | 说明 |
@@ -859,6 +865,39 @@ Content-Type: application/json
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | exam_id | integer | 是 | 考试 ID |
+
+### 7.9 获取考试洞察分析
+
+接口地址：GET /teacher/exams/insights
+
+请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| exam_id | integer | 是 | 考试 ID |
+
+返回参数：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| progress | object | 作答进度信息 |
+| progress.submitted_count | integer | 已开始/已提交人数 |
+| progress.target_count | integer | 班级目标人数 |
+| progress.completion_rate | number | 完成率，0-1 |
+| learning | object | 学习指标 |
+| learning.avg_duration_minutes | number | 平均作答时长（分钟） |
+| learning.avg_score | number | 平均得分 |
+| learning.overall_wrong_rate | number | 整体错误率，0-1 |
+| top_wrong_questions | array | 高错题列表（最多 3 条） |
+| top_wrong_questions[].question_id | integer | 题目 ID |
+| top_wrong_questions[].stem | string | 题干 |
+| top_wrong_questions[].answer_count | integer | 作答人次 |
+| top_wrong_questions[].wrong_count | integer | 错误人次 |
+| top_wrong_questions[].wrong_rate | number | 错误率，0-1 |
+| top_wrong_questions[].avg_spent_seconds | number | 平均耗时（秒） |
+| ai_summary | object | AI 规则解读摘要 |
+| ai_summary.easy_mistakes | array | 易错点描述列表 |
+| ai_summary.teaching_suggestions | array | 教学建议列表 |
 
 返回参数：
 

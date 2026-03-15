@@ -9,6 +9,11 @@ class ClassCreateRequest(BaseModel):
     subject: str
 
 
+class ClassInviteRequest(BaseModel):
+    class_id: int
+    student_id: int
+
+
 class QuestionOptionInput(BaseModel):
     key: str
     content: str

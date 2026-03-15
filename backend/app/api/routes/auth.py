@@ -21,9 +21,14 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
+    existing_username = db.scalar(select(User).where(User.username == payload.username))
+    if existing_username:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already registered")
+
     user = User(
         role=payload.role,
         name=payload.name,
+        username=payload.username,
         email=payload.email,
         phone=payload.phone,
         password_hash=get_password_hash(payload.password),
@@ -53,7 +58,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         {
             "access_token": token,
             "token_type": "bearer",
-            "user": {"id": user.id, "role": user.role, "name": user.name, "email": user.email},
+            "user": {"id": user.id, "role": user.role, "name": user.name, "username": user.username, "email": user.email},
         },
         "register success",
     )
@@ -61,9 +66,9 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 @router.post("/auth/login")
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
-    user = db.scalar(select(User).where(User.email == payload.email))
+    user = db.scalar(select(User).where((User.email == payload.login_id) | (User.username == payload.login_id)))
     if not user or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email/username or password")
 
     user.last_login_at = datetime.now(UTC)
     db.add(user)
@@ -74,7 +79,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             "access_token": create_access_token(str(user.id)),
             "token_type": "bearer",
             "expires_in": 60 * 24 * 60,
-            "user": {"id": user.id, "role": user.role, "name": user.name, "email": user.email},
+            "user": {"id": user.id, "role": user.role, "name": user.name, "username": user.username, "email": user.email},
         }
     )
 
@@ -109,6 +114,7 @@ def _serialize_user(user: User) -> dict:
         "id": user.id,
         "role": user.role,
         "name": user.name,
+        "username": user.username,
         "email": user.email,
         "phone": user.phone,
         "avatar_url": user.avatar_url,
