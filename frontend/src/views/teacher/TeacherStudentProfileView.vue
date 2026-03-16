@@ -16,6 +16,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart, PieChart, RadarChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, RadarComponent, TooltipComponent } from 'echarts/components'
 import { getStudentDetail, type TeacherStudentPortrait } from '@/api/teacher'
+import { mapStudyTaskStatusLabel, mapStudyTaskTypeLabel } from '@/utils/studyTask'
 
 use([CanvasRenderer, LineChart, PieChart, BarChart, RadarChart, GridComponent, TooltipComponent, LegendComponent, RadarComponent])
 
@@ -402,10 +403,10 @@ onMounted(() => {
             <article v-for="task in studyTasks" :key="task.id" class="task-item">
               <div>
                 <h3>{{ task.title }}</h3>
-                <p>{{ task.task_type || '综合复习' }} · 优先级 {{ task.priority }}</p>
+                <p>{{ mapStudyTaskTypeLabel(task.task_type) }} · 优先级 {{ task.priority }}</p>
               </div>
               <div class="task-meta">
-                <span class="task-status" :class="task.status">{{ task.status }}</span>
+                <span class="task-status" :class="task.status">{{ mapStudyTaskStatusLabel(task.status) }}</span>
                 <small>{{ Number(task.estimated_minutes || 0) }} 分钟</small>
               </div>
             </article>

@@ -5,14 +5,18 @@ import {
   AlertTriangle,
   ArrowLeft,
   BrainCircuit,
+  CalendarRange,
   CheckCircle,
   Clock3,
   Pause,
   Play,
+  Save,
+  Settings2,
   Square,
   Target,
   TrendingUp,
   Users,
+  X,
 } from 'lucide-vue-next'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
@@ -33,8 +37,16 @@ const isLoading = ref(true)
 const actionLoading = ref(false)
 const actionError = ref('')
 const classBindingLoading = ref(false)
+const scheduleLoading = ref(false)
+const scheduleError = ref('')
+const scheduleMessage = ref('')
 const allClasses = ref<Array<{ id: number, name: string }>>([])
 const selectedClassIds = ref<number[]>([])
+const showSettingsPanel = ref(false)
+const scheduleForm = ref({
+  start_time: '',
+  end_time: '',
+})
 
 const boundClassCount = computed(() => {
   return Array.isArray(exam.value?.class_ids) ? exam.value.class_ids.length : 0
@@ -61,6 +73,23 @@ const parseServerTime = (value: string) => {
   return new Date(hasTimezone ? value : `${value}Z`).getTime()
 }
 
+const formatDateTimeLocal = (value: string) => {
+  const timestamp = parseServerTime(value)
+  if (Number.isNaN(timestamp)) return ''
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  const hours = `${date.getHours()}`.padStart(2, '0')
+  const minutes = `${date.getMinutes()}`.padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+const toIsoFromLocal = (value: string) => {
+  const date = new Date(value)
+  return date.toISOString()
+}
+
 const effectiveStatus = computed(() => {
   if (!exam.value) return 'draft'
   const status = String(exam.value.status || '')
@@ -79,6 +108,40 @@ const statusText = computed(() => {
   if (effectiveStatus.value === 'published') return '进行中'
   if (effectiveStatus.value === 'expired') return '已超时(待结束)'
   return '已结束'
+})
+
+const canEditSchedule = computed(() => Boolean(exam.value) && effectiveStatus.value !== 'finished')
+
+const canEditStartTime = computed(() => Boolean(exam.value) && exam.value.status === 'draft')
+
+const scheduleRangeText = computed(() => {
+  if (!scheduleForm.value.start_time || !scheduleForm.value.end_time) return '请设置考试开放时间范围'
+  const start = new Date(scheduleForm.value.start_time)
+  const end = new Date(scheduleForm.value.end_time)
+  const diffMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000))
+  if (diffMinutes < 60) return `当前开放 ${diffMinutes} 分钟`
+  if (diffMinutes < 24 * 60) return `当前开放 ${Math.round(diffMinutes / 60)} 小时`
+  return `当前开放 ${Math.round((diffMinutes / 60 / 24) * 10) / 10} 天`
+})
+
+const scheduleValidationError = computed(() => {
+  if (!scheduleForm.value.start_time || !scheduleForm.value.end_time) return '请完整设置开始时间和结束时间'
+  const start = new Date(scheduleForm.value.start_time)
+  const end = new Date(scheduleForm.value.end_time)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return '时间格式无效，请重新选择'
+  if (end.getTime() <= start.getTime()) return '结束时间必须晚于开始时间'
+  if (exam.value?.status !== 'draft' && scheduleForm.value.start_time !== formatDateTimeLocal(String(exam.value?.start_time || ''))) {
+    return '已发布考试只允许调整结束时间，不允许修改开始时间'
+  }
+  return ''
+})
+
+const isScheduleDirty = computed(() => {
+  if (!exam.value) return false
+  return (
+    scheduleForm.value.start_time !== formatDateTimeLocal(String(exam.value.start_time || ''))
+    || scheduleForm.value.end_time !== formatDateTimeLocal(String(exam.value.end_time || ''))
+  )
 })
 
 const submittedCount = computed(() => Number(insights.value?.progress?.submitted_count || 0))
@@ -249,6 +312,10 @@ const fetchExam = async () => {
     exam.value.question_items = (detailRes as any).question_items || []
     exam.value.class_ids = (detailRes as any).classes?.map((item: any) => item.id) || []
     selectedClassIds.value = [...exam.value.class_ids]
+    scheduleForm.value = {
+      start_time: formatDateTimeLocal(String(exam.value.start_time || '')),
+      end_time: formatDateTimeLocal(String(exam.value.end_time || '')),
+    }
     insights.value = insightRes
   } catch (error) {
     console.error('Failed to fetch exam', error)
@@ -273,6 +340,14 @@ onMounted(() => {
 })
 
 const goBack = () => router.back()
+
+const openSettingsPanel = () => {
+  showSettingsPanel.value = true
+}
+
+const closeSettingsPanel = () => {
+  showSettingsPanel.value = false
+}
 
 const handlePublish = async () => {
   if (!canPublishExam.value) {
@@ -333,6 +408,32 @@ const handleSaveClassBinding = async () => {
     classBindingLoading.value = false
   }
 }
+
+const handleSaveSchedule = async () => {
+  if (!exam.value || scheduleLoading.value || !canEditSchedule.value) return
+  if (scheduleValidationError.value) {
+    scheduleError.value = scheduleValidationError.value
+    scheduleMessage.value = ''
+    return
+  }
+
+  scheduleLoading.value = true
+  scheduleError.value = ''
+  scheduleMessage.value = ''
+  try {
+    await updateExam({
+      exam_id: examId,
+      start_time: toIsoFromLocal(scheduleForm.value.start_time),
+      end_time: toIsoFromLocal(scheduleForm.value.end_time),
+    })
+    await fetchExam()
+    scheduleMessage.value = '考试时间已更新'
+  } catch (error: any) {
+    scheduleError.value = error?.message || '保存考试时间失败，请稍后重试'
+  } finally {
+    scheduleLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -341,7 +442,13 @@ const handleSaveClassBinding = async () => {
       <button class="icon-button" @click="goBack" aria-label="返回">
         <ArrowLeft :size="20" />
       </button>
-      <div v-if="exam" class="status-pill" :class="`status--${effectiveStatus}`">{{ statusText }}</div>
+      <div class="header-right" v-if="exam">
+        <div class="status-pill" :class="`status--${effectiveStatus}`">{{ statusText }}</div>
+        <button class="setting-trigger" @click="openSettingsPanel">
+          <Settings2 :size="15" />
+          设置
+        </button>
+      </div>
     </header>
 
     <div v-if="isLoading" class="loading-state">加载中...</div>
@@ -355,6 +462,8 @@ const handleSaveClassBinding = async () => {
             <span class="meta-tag">{{ exam.subject || '不限范围' }}</span>
             <span class="meta-tag">{{ exam.duration_minutes }} 分钟</span>
             <span class="meta-tag">{{ exam.total_score }} 分</span>
+            <span class="meta-tag">开始 {{ new Date(parseServerTime(String(exam.start_time || ''))).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</span>
+            <span class="meta-tag">结束 {{ new Date(parseServerTime(String(exam.end_time || ''))).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</span>
           </div>
         </div>
         <div class="hero-progress">
@@ -462,62 +571,6 @@ const handleSaveClassBinding = async () => {
         </article>
       </section>
 
-      <section class="action-toolbar">
-        <button
-          class="action-btn action-primary"
-          :disabled="actionLoading || !canPublishExam"
-          :title="publishBlockedReason || '发布考试'"
-          v-if="exam.status === 'draft'"
-          @click="handlePublish"
-        >
-          <Play :size="16" />
-          发布考试
-        </button>
-        <button class="action-btn action-warn" :disabled="actionLoading" v-if="exam.status === 'published'" @click="handlePause">
-          <Pause :size="16" />
-          暂停考试
-        </button>
-        <button class="action-btn action-danger" :disabled="actionLoading" v-if="effectiveStatus === 'published' || effectiveStatus === 'expired'" @click="handleFinish">
-          <Square :size="16" />
-          {{ effectiveStatus === 'expired' ? '结束并归档' : '结束考试' }}
-        </button>
-        <button class="action-btn" v-if="effectiveStatus === 'finished'">
-          <CheckCircle :size="16" />
-          进入阅卷
-        </button>
-      </section>
-
-      <p v-if="exam.status === 'draft'" class="action-hint">
-        当前已绑定班级：{{ boundClassCount }} 个，试题数：{{ exam.question_count || 0 }} 题
-      </p>
-
-      <p v-if="effectiveStatus === 'expired'" class="action-hint action-hint--warning">
-        该考试已超过截止时间，但状态尚未归档，请点击“结束并归档”后再进行删除等操作。
-      </p>
-
-      <p v-if="actionError" class="action-error">{{ actionError }}</p>
-
-      <section class="class-bind-panel">
-        <div class="panel-title-row class-bind-header">
-          <h2>发布班级设置</h2>
-          <span class="q-count">已选 {{ selectedClassIds.length }} 个</span>
-        </div>
-        <p class="class-bind-tip">请勾选本场测验要发布到的班级，保存后再发布考试。</p>
-        <div class="class-bind-list" v-if="allClasses.length">
-          <label v-for="item in allClasses" :key="item.id" class="class-bind-item">
-            <input type="checkbox" :value="item.id" v-model="selectedClassIds" :disabled="classBindingLoading" />
-            <span>{{ item.name }}</span>
-          </label>
-        </div>
-        <div class="empty-state" v-else>暂无可绑定班级，请先在班级管理中创建班级。</div>
-        <div class="class-bind-actions">
-          <button class="action-btn" :disabled="classBindingLoading" @click="selectedClassIds = [...(exam?.class_ids || [])]">重置</button>
-          <button class="action-btn action-primary" :disabled="classBindingLoading" @click="handleSaveClassBinding">
-            {{ classBindingLoading ? '保存中...' : '保存班级绑定' }}
-          </button>
-        </div>
-      </section>
-
       <section class="questions-panel">
         <div class="panel-title-row">
           <h2>试题列表</h2>
@@ -532,6 +585,110 @@ const handleSaveClassBinding = async () => {
         </div>
         <div class="empty-state" v-else>试卷目前还是空的</div>
       </section>
+
+      <div v-if="showSettingsPanel" class="settings-modal" @click.self="closeSettingsPanel">
+        <div class="settings-modal-card">
+          <div class="settings-modal-header">
+            <div class="settings-modal-title">
+              <Settings2 :size="16" />
+              <h2>考试设置</h2>
+            </div>
+            <button class="icon-button" @click="closeSettingsPanel" aria-label="关闭设置">
+              <X :size="18" />
+            </button>
+          </div>
+
+          <section class="action-toolbar">
+            <button
+              class="action-btn action-primary"
+              :disabled="actionLoading || !canPublishExam"
+              :title="publishBlockedReason || '发布考试'"
+              v-if="exam.status === 'draft'"
+              @click="handlePublish"
+            >
+              <Play :size="16" />
+              发布考试
+            </button>
+            <button class="action-btn action-warn" :disabled="actionLoading" v-if="exam.status === 'published'" @click="handlePause">
+              <Pause :size="16" />
+              暂停考试
+            </button>
+            <button class="action-btn action-danger" :disabled="actionLoading" v-if="effectiveStatus === 'published' || effectiveStatus === 'expired'" @click="handleFinish">
+              <Square :size="16" />
+              {{ effectiveStatus === 'expired' ? '结束并归档' : '结束考试' }}
+            </button>
+            <button class="action-btn" v-if="effectiveStatus === 'finished'">
+              <CheckCircle :size="16" />
+              进入阅卷
+            </button>
+          </section>
+
+          <p v-if="exam.status === 'draft'" class="action-hint">
+            当前已绑定班级：{{ boundClassCount }} 个，试题数：{{ exam.question_count || 0 }} 题
+          </p>
+
+          <p v-if="effectiveStatus === 'expired'" class="action-hint action-hint--warning">
+            该考试已超过截止时间，但状态尚未归档，请点击“结束并归档”后再进行删除等操作。
+          </p>
+
+          <p v-if="actionError" class="action-error">{{ actionError }}</p>
+
+          <section class="schedule-panel">
+            <div class="panel-title-row schedule-header">
+              <div class="schedule-title-wrap">
+                <h2>考试时间设置</h2>
+                <CalendarRange :size="16" class="panel-icon" />
+              </div>
+              <span class="q-count">{{ scheduleRangeText }}</span>
+            </div>
+            <p class="class-bind-tip">
+              <template v-if="exam.status === 'draft'">草稿状态下可调整开始和结束时间；发布后只允许调整结束时间。</template>
+              <template v-else-if="effectiveStatus === 'finished'">考试已结束，时间窗口已锁定。</template>
+              <template v-else>当前考试已发布，可根据需要延长或缩短结束时间。</template>
+            </p>
+            <div class="schedule-grid">
+              <label class="schedule-field">
+                <span>开始时间</span>
+                <input v-model="scheduleForm.start_time" type="datetime-local" class="schedule-input" :disabled="scheduleLoading || !canEditStartTime" />
+              </label>
+              <label class="schedule-field">
+                <span>结束时间</span>
+                <input v-model="scheduleForm.end_time" type="datetime-local" class="schedule-input" :disabled="scheduleLoading || !canEditSchedule" />
+              </label>
+            </div>
+            <p v-if="scheduleValidationError" class="action-hint action-hint--warning">{{ scheduleValidationError }}</p>
+            <p v-if="scheduleError" class="action-error">{{ scheduleError }}</p>
+            <p v-if="scheduleMessage" class="schedule-success">{{ scheduleMessage }}</p>
+            <div class="class-bind-actions">
+              <button class="action-btn action-primary" :disabled="scheduleLoading || !isScheduleDirty || !!scheduleValidationError || !canEditSchedule" @click="handleSaveSchedule">
+                <Save :size="16" />
+                {{ scheduleLoading ? '保存中...' : '保存时间' }}
+              </button>
+            </div>
+          </section>
+
+          <section class="class-bind-panel">
+            <div class="panel-title-row class-bind-header">
+              <h2>发布班级设置</h2>
+              <span class="q-count">已选 {{ selectedClassIds.length }} 个</span>
+            </div>
+            <p class="class-bind-tip">请勾选本场测验要发布到的班级，保存后再发布考试。</p>
+            <div class="class-bind-list" v-if="allClasses.length">
+              <label v-for="item in allClasses" :key="item.id" class="class-bind-item">
+                <input type="checkbox" :value="item.id" v-model="selectedClassIds" :disabled="classBindingLoading" />
+                <span>{{ item.name }}</span>
+              </label>
+            </div>
+            <div class="empty-state" v-else>暂无可绑定班级，请先在班级管理中创建班级。</div>
+            <div class="class-bind-actions">
+              <button class="action-btn" :disabled="classBindingLoading" @click="selectedClassIds = [...(exam?.class_ids || [])]">重置</button>
+              <button class="action-btn action-primary" :disabled="classBindingLoading" @click="handleSaveClassBinding">
+                {{ classBindingLoading ? '保存中...' : '保存班级绑定' }}
+              </button>
+            </div>
+          </section>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -552,6 +709,25 @@ const handleSaveClassBinding = async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.header-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-trigger {
+  border: 1px solid #d7e0ea;
+  background: #fff;
+  color: #334155;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .icon-button {
@@ -932,6 +1108,104 @@ const handleSaveClassBinding = async () => {
   gap: 10px;
 }
 
+.schedule-panel {
+  border: 1px solid #e4eaf2;
+  border-radius: 14px;
+  background: #fff;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-header {
+  margin-bottom: 0;
+}
+
+.schedule-title-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #556278;
+}
+
+.schedule-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d9e2ec;
+  border-radius: 10px;
+  background: #f8fbff;
+  color: #0f172a;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.schedule-input:disabled {
+  opacity: 0.72;
+  background: #f3f4f6;
+}
+
+.schedule-success {
+  margin: 0;
+  font-size: 12px;
+  color: #0f766e;
+}
+
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(15, 23, 42, 0.3);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+}
+
+.settings-modal-card {
+  width: min(760px, 100%);
+  max-height: min(86dvh, 900px);
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid #dce5ef;
+  background: linear-gradient(180deg, #f8fbff 0%, #f4f8fc 100%);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-modal-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #0f172a;
+}
+
+.settings-modal-title h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
 .class-bind-header {
   margin-bottom: 0;
 }
@@ -1077,6 +1351,19 @@ const handleSaveClassBinding = async () => {
 
   .class-bind-list {
     grid-template-columns: 1fr;
+  }
+
+  .schedule-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-modal {
+    padding: 8px;
+  }
+
+  .settings-modal-card {
+    max-height: min(90dvh, 900px);
+    border-radius: 16px;
   }
 }
 

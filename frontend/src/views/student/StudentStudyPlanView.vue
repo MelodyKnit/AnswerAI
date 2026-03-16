@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { BookOpen, Clock3, Target, Sparkles } from 'lucide-vue-next'
 import http from '@/lib/http'
+import { mapStudyTaskTypeLabel } from '@/utils/studyTask'
 
 const router = useRouter()
 const tasks = ref<any[]>([])
@@ -166,7 +167,7 @@ onMounted(async () => {
         <div class="meta-grid">
           <div class="meta-item">
             <Target :size="14" />
-            <span>{{ task.task_type || '综合复习' }}</span>
+            <span>{{ task.task_type_label || mapStudyTaskTypeLabel(task.task_type) }}</span>
           </div>
           <div class="meta-item">
             <Clock3 :size="14" />
@@ -203,7 +204,7 @@ onMounted(async () => {
           </div>
           <p>{{ task.content || '该任务已被忽略。' }}</p>
           <div class="ignored-meta">
-            <span>{{ task.task_type || '综合复习' }}</span>
+            <span>{{ task.task_type_label || mapStudyTaskTypeLabel(task.task_type) }}</span>
             <span>{{ task.estimated_minutes || 20 }} 分钟</span>
             <span>忽略于 {{ formatDate(task.ignored_at || task.created_at) }}</span>
           </div>
@@ -226,30 +227,33 @@ onMounted(async () => {
 
 <style scoped>
 .study-plan-view {
-  --paper: #f6f7f4;
-  --ink-900: #1f2a1f;
-  --ink-600: #5f6d5f;
-  --line-soft: #d9dfd4;
-  --brand: #1d6b4f;
-  --brand-soft: #e8f4ee;
-  --warning: #ba5a1a;
+  --paper: #ecf3ef;
+  --ink-900: #16231c;
+  --ink-600: #4f6458;
+  --line-soft: #cddad2;
+  --brand: #0f766e;
+  --brand-soft: #dff2ea;
+  --warning: #b45309;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: 100%;
-  padding: 14px;
+  min-height: calc(100% + 48px);
+  width: calc(100% + 32px);
+  margin: -24px -16px;
+  padding: calc(14px + 24px) 16px calc(18px + env(safe-area-inset-bottom));
   background:
-    radial-gradient(circle at 90% -10%, rgba(29, 107, 79, 0.16), transparent 38%),
-    radial-gradient(circle at -10% 24%, rgba(22, 76, 58, 0.12), transparent 34%),
-    linear-gradient(180deg, #fbfcfa 0%, var(--paper) 100%);
+    radial-gradient(125% 46% at 104% -8%, rgba(15, 118, 110, 0.26), rgba(15, 118, 110, 0) 58%),
+    radial-gradient(90% 38% at -6% 18%, rgba(37, 99, 235, 0.12), rgba(37, 99, 235, 0) 66%),
+    linear-gradient(180deg, #f5faf8 0%, var(--paper) 46%, #e7efea 100%);
 }
 
 .hero {
   padding: 18px 16px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid #bfd3c8;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(4px);
+  background: linear-gradient(165deg, rgba(246, 251, 248, 0.92), rgba(231, 243, 236, 0.92));
+  box-shadow: 0 10px 24px rgba(22, 40, 32, 0.07);
+  backdrop-filter: blur(6px);
 }
 
 .hero-row {
@@ -295,8 +299,8 @@ onMounted(async () => {
 }
 
 .ai-score-card {
-  background: linear-gradient(160deg, #ffffff 0%, #edf7f1 100%);
-  border: 1px solid #d4e7db;
+  background: linear-gradient(160deg, rgba(243, 251, 247, 0.95) 0%, rgba(227, 243, 234, 0.92) 100%);
+  border: 1px solid #c8dfd2;
   border-radius: 14px;
   padding: 14px;
 }
@@ -342,9 +346,9 @@ onMounted(async () => {
 }
 
 .metric-cell {
-  border: 1px solid #dce8df;
+  border: 1px solid #d2e0d8;
   border-radius: 10px;
-  background: #fff;
+  background: rgba(246, 250, 248, 0.9);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -362,9 +366,9 @@ onMounted(async () => {
 }
 
 .ai-actions {
-  border: 1px solid #d7e6dc;
+  border: 1px solid #ccdfd2;
   border-radius: 12px;
-  background: #fff;
+  background: rgba(245, 250, 247, 0.88);
   padding: 12px;
 }
 
@@ -385,14 +389,14 @@ onMounted(async () => {
 }
 
 .task-card {
-  background: #fff;
-  border: 1px solid var(--line-soft);
+  background: linear-gradient(160deg, rgba(250, 253, 251, 0.95), rgba(239, 247, 242, 0.92));
+  border: 1px solid #cddbd3;
   border-radius: 14px;
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  box-shadow: 0 6px 16px rgba(31, 42, 31, 0.05);
+  box-shadow: 0 8px 20px rgba(24, 42, 35, 0.06);
 }
 
 .card-head {
@@ -443,8 +447,8 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  background: #f7f9f7;
-  border: 1px solid #e5ece5;
+  background: rgba(243, 248, 245, 0.92);
+  border: 1px solid #d7e3dc;
   border-radius: 10px;
   padding: 10px;
 }
@@ -502,8 +506,8 @@ onMounted(async () => {
 
 .ignored-toggle {
   width: 100%;
-  border: 1px solid #d7dfd8;
-  background: #f7faf8;
+  border: 1px solid #cedad3;
+  background: rgba(243, 249, 246, 0.92);
   color: #335245;
   border-radius: 10px;
   padding: 10px 12px;
@@ -520,9 +524,9 @@ onMounted(async () => {
 }
 
 .ignored-card {
-  border: 1px solid #dce5de;
+  border: 1px solid #d2ddd6;
   border-radius: 12px;
-  background: #fbfcfb;
+  background: rgba(248, 251, 249, 0.9);
   padding: 10px;
 }
 
@@ -590,8 +594,18 @@ onMounted(async () => {
 }
 
 .empty-card p {
-  margin: 0;
-  font-size: 14px;
+  background: rgba(246, 251, 248, 0.88);
+  border: 1px dashed #bfcdc2;
   color: var(--ink-600);
 }
 </style>
+
+
+@media (min-width: 768px) {
+  .study-plan-view {
+    width: calc(100% + 64px);
+    margin: -40px -32px;
+    min-height: calc(100% + 80px);
+    padding: calc(16px + 40px) 32px calc(24px + env(safe-area-inset-bottom));
+  }
+}

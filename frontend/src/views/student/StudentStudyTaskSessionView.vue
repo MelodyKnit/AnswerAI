@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, BookOpen, CheckCircle2, Clock3, Sparkles, Target } from 'lucide-vue-next'
 import http from '@/lib/http'
+import { mapStudyTaskTypeLabel } from '@/utils/studyTask'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,6 +38,24 @@ const activeSteps = computed(() => {
 })
 
 const practiceItems = computed(() => (coachingData.value?.practice_items || []) as Array<any>)
+
+const displayTaskType = computed(() => {
+  const preferred = String(coachingData.value?.task?.task_type_label || '').trim()
+  if (preferred) return preferred
+  return mapStudyTaskTypeLabel(coachingData.value?.task?.task_type || task.value?.task_type)
+})
+
+const displayTaskTitle = computed(() => {
+  const rawTitle = String(task.value?.title || '').trim()
+  if (!rawTitle) return '任务复习'
+  if ((coachingData.value?.task?.task_type || task.value?.task_type) !== 'wrong_question_review') {
+    return rawTitle
+  }
+  const questionCount = practiceItems.value.length
+  const normalizedTitle = rawTitle.replace(/（\d+题）/g, '').replace(/\(\d+题\)/g, '').trim()
+  if (questionCount <= 0) return normalizedTitle
+  return `${normalizedTitle}（${questionCount}题）`
+})
 
 const progressPercent = computed(() => {
   const steps = activeSteps.value
@@ -175,10 +194,10 @@ onMounted(async () => {
           </span>
           <span class="hero-time">{{ task.estimated_minutes || 20 }} 分钟</span>
         </div>
-        <h1>{{ task.title }}</h1>
+        <h1>{{ displayTaskTitle }}</h1>
         <p class="hero-desc">{{ coachingData.coach_summary || task.content || '按步骤完成本次复习。' }}</p>
         <div class="hero-meta">
-          <span><Target :size="14" /> {{ task.task_type || '综合复习' }}</span>
+          <span><Target :size="14" /> {{ displayTaskType }}</span>
           <span><Clock3 :size="14" /> 建议专注 {{ task.estimated_minutes || 20 }} 分钟</span>
           <span><BookOpen :size="14" /> 当前状态 {{ task.status === 'in_progress' ? '进行中' : '待开始' }}</span>
         </div>
@@ -251,8 +270,10 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  min-height: 100%;
-  padding: 14px 14px 26px;
+  min-height: calc(100% + 48px);
+  width: calc(100% + 32px);
+  margin: -24px -16px;
+  padding: calc(14px + 24px) 14px calc(26px + env(safe-area-inset-bottom));
   background:
     radial-gradient(circle at 90% -10%, rgba(29, 107, 79, 0.14), transparent 38%),
     linear-gradient(180deg, #fbfcfa 0%, var(--paper) 100%);
@@ -534,5 +555,14 @@ onMounted(async () => {
 .back-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+@media (min-width: 768px) {
+  .study-session-view {
+    width: calc(100% + 64px);
+    margin: -40px -32px;
+    min-height: calc(100% + 80px);
+    padding: calc(16px + 40px) 18px calc(28px + env(safe-area-inset-bottom));
+  }
 }
 </style>

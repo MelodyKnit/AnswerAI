@@ -188,14 +188,25 @@ onMounted(async () => {
 
 <style scoped>
 .question-preview-page {
-  min-height: 100%;
-  padding: 14px;
+  min-height: calc(100% + 48px);
+  width: calc(100% + 32px);
+  margin: -24px -16px;
+  padding: calc(14px + 24px) 14px calc(18px + env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 14px;
   background:
     radial-gradient(circle at 100% -10%, rgba(15, 118, 110, 0.12), transparent 34%),
     linear-gradient(180deg, #f8fafc 0%, #f3f6fb 100%);
+}
+
+@media (min-width: 768px) {
+  .question-preview-page {
+    width: calc(100% + 64px);
+    margin: -40px -32px;
+    min-height: calc(100% + 80px);
+    padding: calc(16px + 40px) 24px calc(24px + env(safe-area-inset-bottom));
+  }
 }
 
 .preview-topbar {

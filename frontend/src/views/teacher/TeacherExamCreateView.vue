@@ -8,12 +8,40 @@ const router = useRouter()
 const ALL_SUBJECT_VALUE = '__all__'
 const EXAM_CREATE_META_CACHE_KEY = 'teacher_exam_create_meta_v1'
 
+const roundToNextQuarter = (date = new Date()) => {
+  const next = new Date(date)
+  next.setSeconds(0, 0)
+  const minutes = next.getMinutes()
+  next.setMinutes(minutes + (15 - (minutes % 15 || 15)) % 15)
+  return next
+}
+
+const formatDateTimeLocal = (date: Date) => {
+  const year = date.getFullYear()
+  const month = `${date.getMonth() + 1}`.padStart(2, '0')
+  const day = `${date.getDate()}`.padStart(2, '0')
+  const hours = `${date.getHours()}`.padStart(2, '0')
+  const minutes = `${date.getMinutes()}`.padStart(2, '0')
+  return `${year}-${month}-${day}T${hours}:${minutes}`
+}
+
+const toIsoFromLocal = (value: string) => {
+  const dt = new Date(value)
+  return dt.toISOString()
+}
+
+const defaultStart = roundToNextQuarter(new Date())
+const defaultEnd = new Date(defaultStart.getTime() + 24 * 60 * 60 * 1000)
+
 const form = ref({
   title: '',
   instructions: '',
   subject: ALL_SUBJECT_VALUE,
   duration_minutes: 60,
-  selected_class_id: undefined as number | undefined,
+  total_score: 100,
+  start_time: formatDateTimeLocal(defaultStart),
+  end_time: formatDateTimeLocal(defaultEnd),
+  selected_class_ids: [] as number[],
 })
 
 const subjects = ref<string[]>([])
@@ -48,6 +76,77 @@ const questionTypeOptions = [
 const totalScore = computed(() => {
   return examQuestions.value.reduce((sum, item) => sum + Number(item.score || 0), 0)
 })
+
+const questionTypeWeightMap: Record<string, number> = {
+  judge: 0.9,
+  single_choice: 1,
+  blank: 1.1,
+  multiple_choice: 1.25,
+  essay: 1.65,
+  material: 1.85,
+}
+
+const filteredClasses = computed(() => {
+  const activeSubject = getActiveSubject()
+  if (!activeSubject) return classes.value
+  const matched = classes.value.filter((item) => !item.subject || item.subject === activeSubject)
+  return matched.length ? matched : classes.value
+})
+
+const selectedClassCount = computed(() => form.value.selected_class_ids.length)
+
+const timeRangeText = computed(() => {
+  if (!form.value.start_time || !form.value.end_time) return '请设置考试开放时间范围'
+  const start = new Date(form.value.start_time)
+  const end = new Date(form.value.end_time)
+  const diffMinutes = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000))
+  if (diffMinutes < 60) return `考试开放 ${diffMinutes} 分钟`
+  if (diffMinutes < 24 * 60) return `考试开放 ${Math.round(diffMinutes / 60)} 小时`
+  return `考试开放 ${Math.round((diffMinutes / 60 / 24) * 10) / 10} 天`
+})
+
+const isTimeRangeValid = computed(() => {
+  if (!form.value.start_time || !form.value.end_time) return false
+  return new Date(form.value.end_time).getTime() > new Date(form.value.start_time).getTime()
+})
+
+const redistributeQuestionScores = () => {
+  const items = examQuestions.value
+  const targetTotal = Math.max(0, Math.round(Number(form.value.total_score || 0)))
+  if (!items.length || targetTotal <= 0) {
+    examQuestions.value = items.map((item) => ({ ...item, score: 0 }))
+    return
+  }
+
+  const count = items.length
+  const safeTarget = Math.max(targetTotal, count)
+  const weights = items.map((item) => {
+    const typeWeight = questionTypeWeightMap[item.type] ?? 1.1
+    const difficulty = Math.max(0, Math.min(1, Number(item.difficulty || 0.5)))
+    return Math.max(0.8, typeWeight * (1 + difficulty * 0.45))
+  })
+  const totalWeight = weights.reduce((sum, current) => sum + current, 0)
+  const baseScores = new Array(count).fill(1)
+  let remain = safeTarget - count
+  const rawExtras = weights.map((weight) => (remain > 0 ? (weight / totalWeight) * remain : 0))
+  const floors = rawExtras.map((value) => Math.floor(value))
+  remain -= floors.reduce((sum, value) => sum + value, 0)
+
+  const rankedRemainders = rawExtras
+    .map((value, index) => ({ index, fraction: value - floors[index] }))
+    .sort((left, right) => right.fraction - left.fraction)
+
+  const finalScores = baseScores.map((base, index) => base + floors[index])
+  for (let index = 0; index < remain; index += 1) {
+    const current = rankedRemainders[index % rankedRemainders.length]
+    finalScores[current.index] += 1
+  }
+
+  examQuestions.value = items.map((item, index) => ({
+    ...item,
+    score: finalScores[index],
+  }))
+}
 
 const getActiveSubject = () => {
   return form.value.subject && form.value.subject !== ALL_SUBJECT_VALUE ? form.value.subject : undefined
@@ -138,8 +237,13 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
     return
   }
 
-  if (mode === 'publish' && !form.value.selected_class_id) {
-    alert('创建并发布时必须选择一个关联班级')
+  if (!isTimeRangeValid.value) {
+    alert('请设置正确的考试开放时间范围')
+    return
+  }
+
+  if (mode === 'publish' && form.value.selected_class_ids.length === 0) {
+    alert('创建并发布时至少要关联一个班级')
     return
   }
 
@@ -156,6 +260,8 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
     const hasDuplicate = ((existed as any)?.items || []).some((item: any) => String(item?.title || '').trim() === title)
     if (hasDuplicate) {
       alert(`您已创建过同名考试「${title}」，请使用不同名称`)
+      isSubmitting.value = false
+      submitMode.value = null
       return
     }
   } catch (error) {
@@ -163,20 +269,17 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
   }
 
   try {
-    const now = new Date()
-    const end = new Date(now.getTime() + Number(form.value.duration_minutes || 60) * 60 * 1000)
-
     const payload = {
       title,
       subject: form.value.subject,
       duration_minutes: Number(form.value.duration_minutes || 60),
-      start_time: now.toISOString(),
-      end_time: end.toISOString(),
+      start_time: toIsoFromLocal(form.value.start_time),
+      end_time: toIsoFromLocal(form.value.end_time),
       instructions: form.value.instructions || null,
       publish_now: mode === 'publish',
       allow_review: true,
       random_question_order: false,
-      class_ids: form.value.selected_class_id ? [form.value.selected_class_id] : [],
+      class_ids: form.value.selected_class_ids,
       question_items: examQuestions.value.map((item, index) => ({
         question_id: item.question_id,
         score: Number(item.score || 0),
@@ -295,11 +398,12 @@ const appendQuestionsToExam = (questions: any[]) => {
       question_id: q.id,
       stem: q.stem || '',
       type: q.type || '',
-      score: Number(q.score || 5),
+      score: 0,
       difficulty: Number(q.difficulty || 0.5),
     })
   })
   examQuestions.value = next
+  redistributeQuestionScores()
 }
 
 const confirmQuestionSelection = () => {
@@ -313,16 +417,18 @@ const confirmQuestionSelection = () => {
       question_id: q.id,
       stem: q.stem || '',
       type: q.type || '',
-      score: Number(q.score || 5),
+      score: 0,
       difficulty: Number(q.difficulty || 0.5),
     }))
 
   examQuestions.value = [...preserved, ...appended]
+  redistributeQuestionScores()
   closeQuestionSelector()
 }
 
 const removeExamQuestion = (questionId: number) => {
   examQuestions.value = examQuestions.value.filter((item) => item.question_id !== questionId)
+  redistributeQuestionScores()
 }
 
 const openAiAssemble = () => {
@@ -385,6 +491,14 @@ watch(
   () => {
     questionBank.value = []
     questionBankSubject.value = null
+    form.value.selected_class_ids = form.value.selected_class_ids.filter((classId) => classes.value.some((item) => item.id === classId))
+  }
+)
+
+watch(
+  () => form.value.total_score,
+  () => {
+    redistributeQuestionScores()
   }
 )
 
@@ -421,22 +535,52 @@ const getTypeLabel = (type: string) => {
           </select>
         </div>
         <div class="form-group">
-          <label>关联班级（可选）</label>
-          <select v-model="form.selected_class_id" class="form-input">
-            <option :value="undefined">暂不选择</option>
-            <option v-for="cls in classes" :key="cls.id" :value="cls.id">{{ cls.name }}</option>
-          </select>
+          <label>总分上限</label>
+          <input v-model.number="form.total_score" type="number" min="1" class="form-input" />
         </div>
       </div>
 
       <div class="form-row">
         <div class="form-group">
-          <label>时长 (分钟)</label>
-          <input v-model="form.duration_minutes" type="number" class="form-input" />
+          <label>考试时长 (分钟)</label>
+          <input v-model="form.duration_minutes" type="number" min="1" class="form-input" />
         </div>
         <div class="form-group">
-          <label>总分</label>
-          <input type="text" class="form-input" :value="`${totalScore}（自动计算）`" readonly />
+          <label>当前总分</label>
+          <input type="text" class="form-input" :value="`${totalScore}（按题目自动估算）`" readonly />
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>开始时间</label>
+          <input v-model="form.start_time" type="datetime-local" class="form-input" />
+        </div>
+        <div class="form-group">
+          <label>截止时间</label>
+          <input v-model="form.end_time" type="datetime-local" class="form-input" />
+        </div>
+      </div>
+
+      <div class="range-hint-box" :class="{ 'range-hint-box--invalid': !isTimeRangeValid }">
+        <span>{{ timeRangeText }}</span>
+        <strong>系统会在该时间范围内开放本场考试，单次作答时长为 {{ form.duration_minutes }} 分钟。</strong>
+      </div>
+
+      <div class="form-group">
+        <label>关联班级（可多选，可先不选）</label>
+        <div class="class-pick-box">
+          <div v-if="filteredClasses.length" class="class-pick-grid">
+            <label v-for="cls in filteredClasses" :key="cls.id" class="class-pick-item">
+              <input type="checkbox" :value="cls.id" v-model="form.selected_class_ids" />
+              <div>
+                <strong>{{ cls.name }}</strong>
+                <small v-if="cls.subject">{{ cls.subject }}</small>
+              </div>
+            </label>
+          </div>
+          <p v-else class="class-pick-empty">当前还没有可管理班级。你仍然可以先创建考试草稿，之后在考试详情页手动关联班级再发布。</p>
+          <p class="class-pick-hint">当前已选择 {{ selectedClassCount }} 个班级。若暂未绑定，系统仍允许保存草稿，但不会允许直接发布。</p>
         </div>
       </div>
 
@@ -449,6 +593,19 @@ const getTypeLabel = (type: string) => {
       <div class="form-group">
         <label>试题组成</label>
         <div class="add-questions">
+          <div class="score-summary-bar">
+            <div>
+              <span>目标总分</span>
+              <strong>{{ Math.round(Number(form.total_score || 0)) }} 分</strong>
+            </div>
+            <div>
+              <span>当前合计</span>
+              <strong>{{ totalScore }} 分</strong>
+            </div>
+            <button type="button" class="button button--ghost button--small" @click="redistributeQuestionScores" :disabled="examQuestions.length === 0">
+              按算法重新估分
+            </button>
+          </div>
           <template v-if="examQuestions.length === 0">
             <p>尚未添加任何试题</p>
           </template>
@@ -462,6 +619,7 @@ const getTypeLabel = (type: string) => {
                     <div class="q-meta-line">
                       <span>{{ getTypeLabel(item.type) }}</span>
                       <span>难度 {{ item.difficulty }}</span>
+                        <span>算法估分 {{ item.score }}</span>
                     </div>
                   </div>
                 </div>
@@ -568,6 +726,7 @@ const getTypeLabel = (type: string) => {
         class="button button--primary"
         :disabled="isSubmitting"
         @click="handleCreate('publish')"
+        :title="selectedClassCount === 0 ? '请先至少关联一个班级，或先保存草稿后在详情页绑定班级再发布' : ''"
       >
         <Play :size="18" />
         {{ isSubmitting && submitMode === 'publish' ? '发布中...' : '创建并发布' }}
@@ -639,6 +798,107 @@ const getTypeLabel = (type: string) => {
   font-size: 13px;
   font-weight: 500;
   color: var(--ink-soft);
+}
+
+.range-hint-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #dbe5f0;
+  background: #f8fbff;
+}
+
+.range-hint-box span {
+  font-size: 12px;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.range-hint-box strong {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #516274;
+}
+
+.range-hint-box--invalid {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.range-hint-box--invalid span {
+  color: #b91c1c;
+}
+
+.class-pick-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.class-pick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.class-pick-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #dce5ef;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fbfdff;
+}
+
+.class-pick-item strong {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.class-pick-item small {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.class-pick-hint,
+.class-pick-empty {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.score-summary-bar {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #dce7f4;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 10px 12px;
+}
+
+.score-summary-bar span {
+  display: block;
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+
+.score-summary-bar strong {
+  font-size: 18px;
+  color: var(--ink);
 }
 
 .form-input {
@@ -934,8 +1194,13 @@ const getTypeLabel = (type: string) => {
   border-top: 1px solid var(--line);
 }
 
-@media (max-width: 768px) {
+@media (max-width: 520px) {
   .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  .class-pick-grid,
+  .score-summary-bar {
     grid-template-columns: 1fr;
   }
 

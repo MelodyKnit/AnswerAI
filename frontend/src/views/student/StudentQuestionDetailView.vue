@@ -294,8 +294,13 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 100%;
-  padding-bottom: 14px;
+  min-height: calc(100% + 48px);
+  width: calc(100% + 32px);
+  margin: -24px -16px;
+  padding: calc(14px + 24px) 16px calc(20px + env(safe-area-inset-bottom));
+  background:
+    radial-gradient(110% 44% at 104% -10%, rgba(37, 99, 235, 0.16), rgba(37, 99, 235, 0) 60%),
+    linear-gradient(180deg, #f7faff 0%, #eef3fa 100%);
 }
 
 .state-box,
@@ -503,6 +508,15 @@ onMounted(async () => {
 
   .answer-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 768px) {
+  .analysis-view {
+    width: calc(100% + 64px);
+    margin: -40px -32px;
+    min-height: calc(100% + 80px);
+    padding: calc(16px + 40px) 32px calc(24px + env(safe-area-inset-bottom));
   }
 }
 </style>

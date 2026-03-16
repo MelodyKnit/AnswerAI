@@ -24,6 +24,16 @@ from app.services.tasks import complete_ai_task, mark_ai_task_running, queue_ai_
 
 router = APIRouter()
 
+
+def _study_task_type_label(task_type: str | None) -> str:
+    mapping = {
+        "wrong_question_review": "错题回顾",
+        "knowledge_review": "知识点复习",
+        "consolidation": "巩固训练",
+    }
+    normalized = (task_type or "").strip().lower()
+    return mapping.get(normalized, "综合复习")
+
 GROWTH_PROFILE_CACHE_TTL = timedelta(minutes=20)
 _growth_profile_cache: dict[str, dict[str, Any]] = {}
 
@@ -516,12 +526,6 @@ def get_question_analysis(
     if not submission:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Result not found")
 
-    exam_item = db.scalar(
-        select(ExamQuestion).where(ExamQuestion.exam_id == exam_id, ExamQuestion.question_id == question_id)
-    )
-    if not exam_item:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found in exam")
-
     question = db.get(Question, question_id)
     if not question:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
@@ -532,6 +536,12 @@ def get_question_analysis(
             SubmissionAnswer.question_id == question_id,
         )
     )
+    if not answer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question answer not found in submission")
+
+    exam_item = db.scalar(
+        select(ExamQuestion).where(ExamQuestion.exam_id == exam_id, ExamQuestion.question_id == question_id)
+    )
 
     options = db.scalars(
         select(QuestionOption)
@@ -541,7 +551,7 @@ def get_question_analysis(
 
     standard_answer = parse_answer(question.answer_text)
     student_answer = parse_answer(answer.answer_content) if answer and answer.answer_content else (answer.answer_text if answer else None)
-    full_score = float(exam_item.score or 0)
+    full_score = float(exam_item.score) if exam_item else float(question.score or 0)
     gain_score = float(answer.score or 0) if answer else 0.0
 
     is_correct = answer.is_correct if answer else None
@@ -897,9 +907,10 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
     total_minutes = 0
 
     for t in tasks:
-        content = t.feedback or (f"任务类型：{t.task_type}" if t.task_type else "按优先顺序完成相关知识点复习")
-        task_type = t.task_type or "综合复习"
-        type_counter[task_type] = type_counter.get(task_type, 0) + 1
+        task_type = t.task_type or ""
+        task_type_label = _study_task_type_label(task_type)
+        content = t.feedback or (f"任务类型：{task_type_label}" if task_type else "按优先顺序完成相关知识点复习")
+        type_counter[task_type_label] = type_counter.get(task_type_label, 0) + 1
         if t.status == "completed":
             completed_count += 1
         elif t.status == "in_progress":
@@ -916,6 +927,7 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
                 "status": t.status,
                 "priority": t.priority,
                 "task_type": task_type,
+                "task_type_label": task_type_label,
                 "estimated_minutes": t.estimated_minutes,
                 "created_at": t.created_at.isoformat(),
             }
@@ -923,14 +935,17 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
 
     ignored_serialized = []
     for t in ignored_tasks:
+        task_type = t.task_type or ""
+        task_type_label = _study_task_type_label(task_type)
         ignored_serialized.append(
             {
                 "id": t.id,
                 "title": t.title,
-                "content": t.feedback or (f"任务类型：{t.task_type}" if t.task_type else "已忽略任务"),
+                "content": t.feedback or (f"任务类型：{task_type_label}" if task_type else "已忽略任务"),
                 "status": t.status,
                 "priority": t.priority,
-                "task_type": t.task_type or "综合复习",
+                "task_type": task_type,
+                "task_type_label": task_type_label,
                 "estimated_minutes": t.estimated_minutes,
                 "created_at": t.created_at.isoformat(),
                 "ignored_at": t.completed_at.isoformat() if t.completed_at else None,
@@ -1037,6 +1052,9 @@ def get_study_task_coaching(
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
+    plan = db.get(StudyPlan, task.plan_id)
+    source_exam_id = int(plan.source_exam_id or 0) if plan else 0
+
     wrong_query = (
         select(SubmissionAnswer, Question, ExamSubmission)
         .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
@@ -1046,6 +1064,8 @@ def get_study_task_coaching(
         .order_by(SubmissionAnswer.updated_at.desc())
         .limit(80)
     )
+    if task.task_type == "wrong_question_review" and source_exam_id > 0:
+        wrong_query = wrong_query.where(ExamSubmission.exam_id == source_exam_id)
     if task.knowledge_point_id:
         wrong_query = wrong_query.join(
             QuestionKnowledgePoint,
@@ -1090,14 +1110,17 @@ def get_study_task_coaching(
             break
 
     if not practice_items:
-        fallback_rows = db.execute(
+        fallback_query = (
             select(SubmissionAnswer, Question, ExamSubmission)
             .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
             .join(Question, SubmissionAnswer.question_id == Question.id)
             .where(ExamSubmission.student_id == current_user.id)
             .order_by(SubmissionAnswer.updated_at.desc())
             .limit(6)
-        ).all()
+        )
+        if task.task_type == "wrong_question_review" and source_exam_id > 0:
+            fallback_query = fallback_query.where(ExamSubmission.exam_id == source_exam_id)
+        fallback_rows = db.execute(fallback_query).all()
         for answer, question, submission in fallback_rows:
             student_answer = parse_answer(answer.answer_content) if answer.answer_content else answer.answer_text
             practice_status = classify_practice_status(answer, student_answer)
@@ -1123,7 +1146,7 @@ def get_study_task_coaching(
     ]
 
     coach_summary = (
-        f"本次任务聚焦{task.task_type or '综合复习'}，"
+        f"本次任务聚焦{_study_task_type_label(task.task_type)}，"
         f"已为你挑选 {len(practice_items)} 道真实历史错题/近似题进行复练。"
     )
 
@@ -1133,6 +1156,7 @@ def get_study_task_coaching(
                 "id": task.id,
                 "title": task.title,
                 "task_type": task.task_type,
+                "task_type_label": _study_task_type_label(task.task_type),
                 "estimated_minutes": estimated_minutes,
                 "status": task.status,
             },

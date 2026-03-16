@@ -26,6 +26,29 @@ from app.services.tasks import complete_ai_task, create_ai_task, mark_ai_task_ru
 router = APIRouter()
 
 
+def _to_utc_aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+def _to_utc_naive(value: datetime) -> datetime:
+    return _to_utc_aware(value).astimezone(UTC).replace(tzinfo=None)
+
+
+def _normalize_exam_window(start_time: datetime, end_time: datetime, duration_minutes: int, publish_now: bool) -> tuple[datetime, datetime]:
+    start_aware = _to_utc_aware(start_time)
+    end_aware = _to_utc_aware(end_time)
+
+    if publish_now:
+        now_utc = datetime.now(UTC)
+        if end_aware <= now_utc or start_aware >= end_aware:
+            start_aware = now_utc
+            end_aware = now_utc + timedelta(minutes=max(int(duration_minutes or 60), 1))
+    elif start_aware >= end_aware:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exam end time must be later than start time")
+
+    return _to_utc_naive(start_aware), _to_utc_naive(end_aware)
+
+
 @router.get("/teacher/dashboard/overview")
 def get_teacher_dashboard_overview(
     subject: str | None = None,
@@ -934,19 +957,12 @@ def create_exam(payload: ExamCreateRequest, current_user: User = Depends(require
     if payload.publish_now and len(payload.question_items) == 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please add at least one question before publishing")
 
-    start_time = payload.start_time
-    end_time = payload.end_time
-    if payload.publish_now:
-        now_utc = datetime.now(UTC)
-        start_aware = start_time if start_time.tzinfo is not None else start_time.replace(tzinfo=UTC)
-        end_aware = end_time if end_time.tzinfo is not None else end_time.replace(tzinfo=UTC)
-        if end_aware <= now_utc or start_aware >= end_aware:
-            start_aware = now_utc
-            end_aware = now_utc + timedelta(minutes=max(int(payload.duration_minutes or 60), 1))
-
-        # Persist as UTC-naive for SQLite consistency.
-        start_time = start_aware.replace(tzinfo=None)
-        end_time = end_aware.replace(tzinfo=None)
+    start_time, end_time = _normalize_exam_window(
+        payload.start_time,
+        payload.end_time,
+        payload.duration_minutes,
+        payload.publish_now,
+    )
 
     subject_obj = _get_subject_by_name(db, payload.subject)
     exam = Exam(
@@ -1131,6 +1147,17 @@ def update_exam(payload: ExamUpdateRequest, current_user: User = Depends(require
     class_ids = data.pop("class_ids", None)
     question_items = data.pop("question_items", None)
     data.pop("exam_id", None)
+    if "start_time" in data or "end_time" in data:
+        normalized_start, normalized_end = _normalize_exam_window(
+            data.get("start_time") or exam.start_time,
+            data.get("end_time") or exam.end_time,
+            int(data.get("duration_minutes") or exam.duration_minutes or 60),
+            False,
+        )
+        if "start_time" in data:
+            data["start_time"] = normalized_start
+        if "end_time" in data:
+            data["end_time"] = normalized_end
     for field, value in data.items():
         setattr(exam, field, value)
     if question_items is not None:
