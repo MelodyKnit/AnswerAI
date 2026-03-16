@@ -113,6 +113,10 @@ const goStudentProfile = (studentId: number) => {
   router.push(`/app/teacher/students/${studentId}`)
 }
 
+const goClassAnalysis = () => {
+  router.push(`/app/teacher/classes/${classId}/analysis`)
+}
+
 const exportStudentsAsCsv = () => {
   actionMessage.value = ''
 
@@ -232,6 +236,9 @@ const removeStudent = async (student: any) => {
           <span class="tag">{{ classDetail.subject }}</span>
         </div>
       </div>
+      <button v-if="classDetail" class="analysis-header-button" @click="goClassAnalysis">
+        学习分析
+      </button>
     </header>
 
     <div v-if="isLoading" class="loading-state">加载中...</div>
@@ -248,6 +255,14 @@ const removeStudent = async (student: any) => {
             {{ classDetail.invite_code }}
           </button>
         </div>
+        <button class="analysis-entry-card" @click="goClassAnalysis">
+          <div class="analysis-entry-copy">
+            <span class="analysis-entry-kicker">AI 班级学习分析</span>
+            <strong>查看班级学情趋势、风险分层与干预建议</strong>
+            <span class="analysis-entry-meta">单独页面展示图表、重点学生和针对性教学动作</span>
+          </div>
+          <span class="analysis-entry-arrow">进入</span>
+        </button>
       </section>
 
       <section class="students-section">
@@ -361,6 +376,17 @@ const removeStudent = async (student: any) => {
   margin-bottom: 2px;
 }
 
+.analysis-header-button {
+  margin-left: auto;
+  border: 1px solid rgba(60, 106, 88, 0.22);
+  background: linear-gradient(135deg, #f8fcf9 0%, #edf6f1 100%);
+  color: #33584a;
+  border-radius: 999px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .icon-button {
   background: none;
   border: none;
@@ -423,6 +449,39 @@ const removeStudent = async (student: any) => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.analysis-entry-card {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(60, 106, 88, 0.16);
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, #fbfdfb 0%, #f0f7f3 100%);
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+}
+
+.analysis-entry-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.analysis-entry-kicker {
+  font-size: 12px;
+  color: #5b7d70;
+}
+
+.analysis-entry-copy strong {
+  color: var(--ink);
+}
+
+.analysis-entry-meta,
+.analysis-entry-arrow {
+  font-size: 12px;
+  color: var(--ink-soft);
 }
 
 .stat-card {

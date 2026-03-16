@@ -151,6 +151,62 @@ export interface TeacherFeedbackListResponse {
   page_size: number
 }
 
+export interface TeacherClassAnalysis {
+  overview: {
+    class_name: string
+    student_count: number
+    exam_count: number
+    avg_score: number
+    avg_correct_rate: number
+    completion_rate: number
+  }
+  risk_distribution: Array<{
+    level: 'high' | 'medium' | 'low' | string
+    label: string
+    count: number
+  }>
+  score_distribution: Array<{
+    range: string
+    count: number
+  }>
+  exam_trend: Array<{
+    exam_id: number
+    title: string
+    avg_score: number
+    submission_rate: number
+    submitted_count: number
+    student_count: number
+  }>
+  weak_knowledge_points: Array<{
+    name: string
+    count: number
+  }>
+  question_type_performance: Array<{
+    type: string
+    label: string
+    question_count: number
+    wrong_rate: number
+  }>
+  focus_students: Array<{
+    student_id: number
+    student_name: string
+    score: number
+    correct_rate: number
+    risk_level: 'high' | 'medium' | 'low' | string
+  }>
+  student_risks: Array<{
+    student_id: number
+    student_name: string
+    risk_level: 'high' | 'medium' | 'low' | string
+    score: number
+    correct_rate: number
+  }>
+  ai_insight: {
+    summary: string
+    actions: string[]
+  }
+}
+
 export const getTeacherDashboardOverview = (params?: { subject?: string }) => {
   return http.get('/teacher/dashboard/overview', { params }) as Promise<TeacherDashboardOverview>
 }
@@ -180,6 +236,10 @@ export const getClassDetail = (class_id: number) => {
 
 export const getClassStudents = (params: { class_id: number, keyword?: string, risk_level?: string, page?: number, page_size?: number }) => {
   return http.get('/teacher/classes/students', { params })
+}
+
+export const getClassAnalysis = (class_id: number) => {
+  return http.get('/teacher/classes/analysis', { params: { class_id } }) as Promise<TeacherClassAnalysis>
 }
 
 export const inviteStudentToClass = (data: { class_id: number, student_id: number }) => {

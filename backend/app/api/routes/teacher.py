@@ -25,6 +25,15 @@ from app.services.tasks import complete_ai_task, create_ai_task, mark_ai_task_ru
 
 router = APIRouter()
 
+QUESTION_TYPE_LABELS = {
+    "single_choice": "单选题",
+    "multiple_choice": "多选题",
+    "judge": "判断题",
+    "fill_blank": "填空题",
+    "short_answer": "简答题",
+    "essay": "论述题",
+}
+
 
 def _to_utc_aware(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
@@ -32,6 +41,56 @@ def _to_utc_aware(value: datetime) -> datetime:
 
 def _to_utc_naive(value: datetime) -> datetime:
     return _to_utc_aware(value).astimezone(UTC).replace(tzinfo=None)
+
+
+def _class_risk_level(score: float, correct_rate: float) -> str:
+    if score < 45 or correct_rate < 0.45:
+        return "high"
+    if score < 60 or correct_rate < 0.6:
+        return "medium"
+    return "low"
+
+
+def _question_type_label(question_type: str | None) -> str:
+    key = str(question_type or "").strip().lower()
+    return QUESTION_TYPE_LABELS.get(key, key or "未分类")
+
+
+def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
+    overview = payload["overview"]
+    weak_points = payload["weak_knowledge_points"]
+    focus_students = payload["focus_students"]
+    risk_distribution = payload["risk_distribution"]
+    high_risk_count = next((int(item["count"]) for item in risk_distribution if item["level"] == "high"), 0)
+    medium_risk_count = next((int(item["count"]) for item in risk_distribution if item["level"] == "medium"), 0)
+
+    summary_parts = [
+        f"班级共 {overview['student_count']} 人，最近共纳入 {overview['exam_count']} 场测验样本，最近测验均分 {round(float(overview['avg_score'] or 0), 1)} 分。",
+        f"整体提交率约 {round(float(overview['completion_rate'] or 0))}% ，平均正确率约 {round(float(overview['avg_correct_rate'] or 0))}% 。",
+    ]
+    if high_risk_count:
+        summary_parts.append(f"当前高风险学生 {high_risk_count} 人，需要优先安排一对一错因复盘。")
+    elif medium_risk_count:
+        summary_parts.append(f"当前预警学生 {medium_risk_count} 人，建议做分层巩固训练。")
+    if weak_points:
+        summary_parts.append(f"薄弱点主要集中在 {weak_points[0]['name']} 等知识点。")
+
+    actions: list[str] = []
+    if weak_points:
+        actions.append(f"围绕 {weak_points[0]['name']} 组织一次 15 分钟讲评，再配 2 道同类题即时巩固。")
+    if high_risk_count:
+        actions.append("先锁定高风险学生，按错题原因分组，安排短时面批和针对训练。")
+    if focus_students:
+        actions.append(f"优先跟进 {focus_students[0]['student_name']} 等重点学生，观察下一次测验回升情况。")
+    if overview["completion_rate"] < 80:
+        actions.append("提交率偏低，建议排查到课、作答提醒和考试流程，必要时安排补测。")
+    if not actions:
+        actions.append("整体表现较稳定，建议保持每周小测并继续按错题主题做滚动复盘。")
+
+    return {
+        "summary": "".join(summary_parts),
+        "actions": actions[:4],
+    }
 
 
 def _normalize_exam_window(start_time: datetime, end_time: datetime, duration_minutes: int, publish_now: bool) -> tuple[datetime, datetime]:
@@ -396,6 +455,206 @@ def get_class_students(
             "risk_level": risk_level or "unknown",
         })
     return success_response({"items": serialized, "total": total})
+
+
+@router.get("/teacher/classes/analysis")
+def get_class_analysis(class_id: int, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    获取单个班级的多维学习分析与建议。
+    """
+    classroom = _get_teacher_class(db, current_user.id, class_id)
+
+    student_rows = db.execute(
+        select(User.id, User.name)
+        .join(ClassStudent, ClassStudent.student_id == User.id)
+        .where(ClassStudent.class_id == class_id, ClassStudent.status == "active")
+    ).all()
+    student_map = {int(row.id): str(row.name or f"学生#{row.id}") for row in student_rows}
+    student_ids = list(student_map.keys())
+
+    if not student_ids:
+        empty_payload = {
+            "overview": {
+                "class_name": classroom.name,
+                "student_count": 0,
+                "exam_count": 0,
+                "avg_score": 0,
+                "avg_correct_rate": 0,
+                "completion_rate": 0,
+            },
+            "risk_distribution": [
+                {"level": "high", "label": "高风险", "count": 0},
+                {"level": "medium", "label": "预警", "count": 0},
+                {"level": "low", "label": "稳定", "count": 0},
+            ],
+            "score_distribution": [],
+            "exam_trend": [],
+            "weak_knowledge_points": [],
+            "question_type_performance": [],
+            "focus_students": [],
+            "student_risks": [],
+        }
+        empty_payload["ai_insight"] = {
+            "summary": "当前班级还没有学生数据，建议先邀请学生入班并完成至少一场测验后再查看分析。",
+            "actions": ["先完成班级组建并发布一次基础测验，系统会自动生成班级学习分析。"],
+        }
+        return success_response(empty_payload)
+
+    submissions = db.scalars(
+        select(ExamSubmission)
+        .where(
+            ExamSubmission.class_id == class_id,
+            ExamSubmission.teacher_id == current_user.id,
+            ExamSubmission.student_id.in_(student_ids),
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
+        .order_by(ExamSubmission.submitted_at.desc(), ExamSubmission.created_at.desc())
+    ).all()
+
+    latest_submission_by_student: dict[int, ExamSubmission] = {}
+    for submission in submissions:
+        sid = int(submission.student_id)
+        if sid not in latest_submission_by_student:
+            latest_submission_by_student[sid] = submission
+
+    latest_submissions = list(latest_submission_by_student.values())
+    latest_scores = [float(item.total_score or 0) for item in latest_submissions]
+    latest_correct_rates = [float(item.correct_rate or 0) * 100 for item in latest_submissions]
+
+    student_risks: list[dict[str, Any]] = []
+    for sid, submission in latest_submission_by_student.items():
+        score = round(float(submission.total_score or 0), 1)
+        correct_rate = round(float(submission.correct_rate or 0) * 100, 1)
+        risk_level = _class_risk_level(score, correct_rate / 100)
+        student_risks.append(
+            {
+                "student_id": sid,
+                "student_name": student_map.get(sid, f"学生#{sid}"),
+                "risk_level": risk_level,
+                "score": score,
+                "correct_rate": correct_rate,
+            }
+        )
+
+    student_risks.sort(key=lambda item: ({"high": 0, "medium": 1, "low": 2}.get(item["risk_level"], 3), item["score"]))
+    focus_students = student_risks[:5]
+
+    risk_distribution = [
+        {"level": "high", "label": "高风险", "count": sum(1 for item in student_risks if item["risk_level"] == "high")},
+        {"level": "medium", "label": "预警", "count": sum(1 for item in student_risks if item["risk_level"] == "medium")},
+        {"level": "low", "label": "稳定", "count": sum(1 for item in student_risks if item["risk_level"] == "low")},
+    ]
+
+    score_buckets = [("90-100", 90, 100), ("80-89", 80, 89.999), ("70-79", 70, 79.999), ("60-69", 60, 69.999), ("60以下", -1, 59.999)]
+    score_distribution = []
+    for label, lower, upper in score_buckets:
+        count = sum(1 for score in latest_scores if lower <= score <= upper)
+        if count > 0:
+            score_distribution.append({"range": label, "count": count})
+
+    exam_rows = db.execute(
+        select(
+            Exam.id.label("exam_id"),
+            Exam.title.label("title"),
+            func.avg(ExamSubmission.total_score).label("avg_score"),
+            func.count(func.distinct(ExamSubmission.student_id)).label("submitted_count"),
+        )
+        .select_from(ExamSubmission)
+        .join(Exam, Exam.id == ExamSubmission.exam_id)
+        .where(
+            ExamSubmission.class_id == class_id,
+            ExamSubmission.teacher_id == current_user.id,
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
+        .group_by(Exam.id, Exam.title, Exam.start_time, Exam.created_at)
+        .order_by(func.max(ExamSubmission.submitted_at).desc(), Exam.created_at.desc())
+        .limit(6)
+    ).all()
+    exam_trend = [
+        {
+            "exam_id": int(row.exam_id),
+            "title": str(row.title or f"考试#{row.exam_id}"),
+            "avg_score": round(float(row.avg_score or 0), 1),
+            "submission_rate": round((int(row.submitted_count or 0) / max(len(student_ids), 1)) * 100, 1),
+            "submitted_count": int(row.submitted_count or 0),
+            "student_count": len(student_ids),
+        }
+        for row in exam_rows
+    ]
+
+    weak_point_rows = db.execute(
+        select(
+            KnowledgePoint.name.label("name"),
+            func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).label("wrong_count"),
+        )
+        .select_from(SubmissionAnswer)
+        .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+        .join(QuestionKnowledgePoint, QuestionKnowledgePoint.question_id == SubmissionAnswer.question_id)
+        .join(KnowledgePoint, KnowledgePoint.id == QuestionKnowledgePoint.knowledge_point_id)
+        .where(
+            ExamSubmission.class_id == class_id,
+            ExamSubmission.teacher_id == current_user.id,
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
+        .group_by(KnowledgePoint.name)
+        .order_by(func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).desc())
+        .limit(8)
+    ).all()
+    weak_knowledge_points = [
+        {"name": str(row.name or "未命名知识点"), "count": int(row.wrong_count or 0)}
+        for row in weak_point_rows
+        if int(row.wrong_count or 0) > 0
+    ]
+
+    type_rows = db.execute(
+        select(
+            Question.type.label("type"),
+            func.count(SubmissionAnswer.id).label("question_count"),
+            func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).label("wrong_count"),
+        )
+        .select_from(SubmissionAnswer)
+        .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+        .join(Question, Question.id == SubmissionAnswer.question_id)
+        .where(
+            ExamSubmission.class_id == class_id,
+            ExamSubmission.teacher_id == current_user.id,
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
+        .group_by(Question.type)
+        .order_by(func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).desc())
+    ).all()
+    question_type_performance = [
+        {
+            "type": str(row.type or "unknown"),
+            "label": _question_type_label(row.type),
+            "question_count": int(row.question_count or 0),
+            "wrong_rate": round((int(row.wrong_count or 0) / max(int(row.question_count or 0), 1)), 2),
+        }
+        for row in type_rows
+        if int(row.question_count or 0) > 0
+    ]
+
+    overview = {
+        "class_name": classroom.name,
+        "student_count": len(student_ids),
+        "exam_count": len(exam_trend),
+        "avg_score": round(sum(latest_scores) / len(latest_scores), 1) if latest_scores else 0,
+        "avg_correct_rate": round(sum(latest_correct_rates) / len(latest_correct_rates), 1) if latest_correct_rates else 0,
+        "completion_rate": round(((len(latest_submission_by_student) / max(len(student_ids), 1)) * 100), 1),
+    }
+
+    payload = {
+        "overview": overview,
+        "risk_distribution": risk_distribution,
+        "score_distribution": score_distribution,
+        "exam_trend": list(reversed(exam_trend)),
+        "weak_knowledge_points": weak_knowledge_points,
+        "question_type_performance": question_type_performance,
+        "focus_students": focus_students,
+        "student_risks": student_risks,
+    }
+    payload["ai_insight"] = _build_class_analysis_fallback(payload)
+    return success_response(payload)
 
 
 @router.post("/teacher/classes/students/invite")
