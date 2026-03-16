@@ -33,6 +33,7 @@ import TeacherSettingsSecurityView from '../views/teacher/TeacherSettingsSecurit
 import TeacherClassDetailView from '../views/teacher/TeacherClassDetailView.vue'
 import TeacherClassesView from '../views/teacher/TeacherClassesView.vue'
 import TeacherExamDetailView from '../views/teacher/TeacherExamDetailView.vue'
+import TeacherStudentProfileView from '../views/teacher/TeacherStudentProfileView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -149,6 +150,12 @@ const router = createRouter({
           name: 'teacher-class-detail',
           component: TeacherClassDetailView,
           meta: { title: '班级详情', section: 'teacher', hideNav: true }
+        },
+        {
+          path: 'teacher/students/:id',
+          name: 'teacher-student-profile',
+          component: TeacherStudentProfileView,
+          meta: { title: '学生学习画像', section: 'teacher', hideNav: true }
         },
         {
           path: 'teacher/exams',

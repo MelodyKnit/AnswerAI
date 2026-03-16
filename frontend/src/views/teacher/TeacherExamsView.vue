@@ -257,6 +257,7 @@ const getStatusText = (exam: any) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 14px;
   padding: 16px;
   background: #fff;
   border: 1px solid var(--line);
@@ -272,12 +273,16 @@ const getStatusText = (exam: any) => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
+  flex: 1;
 }
 
 .exam-title {
   font-size: 16px;
   font-weight: 500;
   color: var(--ink);
+  margin: 0;
+  line-height: 1.35;
 }
 
 .exam-meta {
@@ -285,6 +290,8 @@ const getStatusText = (exam: any) => {
   color: var(--ink-soft);
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 
 .dot {
@@ -295,6 +302,7 @@ const getStatusText = (exam: any) => {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-shrink: 0;
 }
 
 .delete-button {
@@ -324,8 +332,19 @@ const getStatusText = (exam: any) => {
 }
 
 .status-badge {
-  font-size: 13px;
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  background: #f8fafc;
+  border: 1px solid currentColor;
+  opacity: 0.92;
 }
 
 .icon-right {
@@ -343,6 +362,22 @@ const getStatusText = (exam: any) => {
 }
 .empty-icon {
   opacity: 0.5;
+}
+
+@media (max-width: 768px) {
+  .exam-card {
+    align-items: flex-start;
+  }
+
+  .card-side {
+    min-width: 108px;
+    justify-content: flex-end;
+    align-self: center;
+  }
+
+  .status-badge {
+    max-width: 100%;
+  }
 }
 </style>
 

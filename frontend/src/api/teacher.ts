@@ -21,6 +21,111 @@ export interface TeacherDashboardOverview {
   }>
 }
 
+export interface TeacherStudentPortrait {
+  student: {
+    id: number
+    name: string
+    email?: string | null
+    phone?: string | null
+    avatar_url?: string | null
+    grade_name?: string | null
+    school_name?: string | null
+    status?: string | null
+    last_login_at?: string | null
+  }
+  class?: {
+    id: number
+    name: string
+    grade_name: string
+    subject: string
+    teacher_id: number
+    student_count: number
+    invite_code: string
+    status: string
+    created_at: string
+  } | null
+  overview: {
+    exam_count: number
+    avg_score: number
+    latest_score: number
+    avg_correct_rate: number
+    momentum: number
+    pending_review_count: number
+    active_task_count: number
+    estimated_study_minutes: number
+    risk_level: 'high' | 'medium' | 'low' | string
+  }
+  ability_profile: Array<{
+    name: string
+    value: number
+    question_count: number
+    accuracy: number
+    reason: string
+  }>
+  question_type_distribution: Array<{
+    type: string
+    question_count: number
+    accuracy: number
+  }>
+  knowledge_points: Array<{
+    id: number
+    name: string
+    question_count: number
+    wrong_count: number
+    mastery: number
+  }>
+  trend: Array<{
+    exam_id: number
+    exam_title: string
+    submitted_at: string
+    score: number
+    correct_rate: number
+    class_avg: number
+    ranking_in_class?: number | null
+  }>
+  study_tasks: Array<{
+    id: number
+    title: string
+    task_type?: string | null
+    status: string
+    priority: number
+    estimated_minutes?: number | null
+    feedback?: string | null
+    created_at: string
+  }>
+  task_summary: {
+    pending_count: number
+    completed_count: number
+    ignored_count: number
+    estimated_minutes: number
+  }
+  ai_insight: {
+    summary?: string | null
+    coaching_suggestions: string[]
+    weak_knowledge_points: string[]
+    highlight?: {
+      name: string
+      value: number
+      question_count: number
+      accuracy: number
+      reason: string
+    } | null
+    risk_focus?: {
+      name: string
+      value: number
+      question_count: number
+      accuracy: number
+      reason: string
+    } | null
+  }
+  latest_summary: {
+    latest_exam_id?: number | null
+    latest_exam_title?: string | null
+    latest_total_score?: number | null
+    latest_submitted_at?: string | null
+  }
+}
+
 export const getTeacherDashboardOverview = (params?: { subject?: string }) => {
   return http.get('/teacher/dashboard/overview', { params }) as Promise<TeacherDashboardOverview>
 }
@@ -52,7 +157,7 @@ export const removeStudentFromClass = (data: { class_id: number, student_id: num
 }
 
 export const getStudentDetail = (student_id: number) => {
-  return http.get('/teacher/students/detail', { params: { student_id } })
+  return http.get('/teacher/students/detail', { params: { student_id } }) as Promise<TeacherStudentPortrait>
 }
 
 // --- 6. 教师题库与出题接口 ---

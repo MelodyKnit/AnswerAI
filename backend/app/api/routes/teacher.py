@@ -16,6 +16,7 @@ from app.models.exam import Exam, ExamClass, ExamQuestion, ExamSubmission, Submi
 from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
 from app.models.user import AITask, ReviewItem, ReviewLog, StudentProfileSnapshot, StudyPlan, StudyTask, User
 from app.schemas.teacher import AIExamAssembleRequest, AIQuestionGenerateRequest, AIQuestionReviewRequest, AIScoreRequest, ClassCreateRequest, ClassInviteRequest, DeleteRequest, ExamActionRequest, ExamCreateRequest, ExamUpdateRequest, ImportQuestionsRequest, QuestionCreateRequest, QuestionUpdateRequest, RetakeRequestActionRequest, ReviewSubmitRequest
+from app.services.student_growth_ai import build_growth_ability_profile
 from app.services.realtime import realtime_events, submission_channel
 from app.services.llm import generate_questions_with_llm
 from app.services.scoring import SUBJECTIVE_TYPES, serialize_answer
@@ -396,14 +397,230 @@ def get_student_detail(student_id: int, current_user: User = Depends(require_rol
     if not relation:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No permission for this student")
     classroom = db.get(ClassRoom, relation.class_id)
-    latest_submission = db.scalar(select(ExamSubmission).where(ExamSubmission.student_id == student_id).order_by(ExamSubmission.created_at.desc()))
+    submissions = db.scalars(
+        select(ExamSubmission)
+        .where(
+            ExamSubmission.student_id == student_id,
+            ExamSubmission.teacher_id == current_user.id,
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
+        .order_by(ExamSubmission.submitted_at.asc(), ExamSubmission.created_at.asc())
+    ).all()
+    latest_submission = submissions[-1] if submissions else None
+
+    exam_ids = [item.exam_id for item in submissions]
+    answer_records: list[dict[str, Any]] = []
+    if exam_ids:
+        answer_rows = db.execute(
+            select(SubmissionAnswer, Question, Subject)
+            .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+            .join(Question, SubmissionAnswer.question_id == Question.id)
+            .outerjoin(Subject, Question.subject_id == Subject.id)
+            .where(
+                ExamSubmission.student_id == student_id,
+                ExamSubmission.teacher_id == current_user.id,
+                ExamSubmission.exam_id.in_(exam_ids),
+            )
+        ).all()
+        answer_records = [
+            {
+                "subject": subject_obj.name if subject_obj else None,
+                "question_type": question.type,
+                "stem": question.stem,
+                "analysis": question.analysis,
+                "is_correct": answer.is_correct,
+            }
+            for answer, question, subject_obj in answer_rows
+        ]
+
+    growth_profile = build_growth_ability_profile(answer_records)
+
+    trend: list[dict[str, Any]] = []
+    recent_submissions = submissions[-8:]
+    for submission in recent_submissions:
+        exam = db.get(Exam, submission.exam_id)
+        class_avg = db.scalar(
+            select(func.avg(ExamSubmission.total_score)).where(
+                ExamSubmission.exam_id == submission.exam_id,
+                ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+            )
+        ) or 0
+        trend.append(
+            {
+                "exam_id": submission.exam_id,
+                "exam_title": exam.title if exam else f"考试#{submission.exam_id}",
+                "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else submission.created_at.isoformat(),
+                "score": round(float(submission.total_score or 0), 1),
+                "correct_rate": round(float(submission.correct_rate or 0), 2),
+                "class_avg": round(float(class_avg or 0), 1),
+                "ranking_in_class": submission.ranking_in_class,
+            }
+        )
+
+    knowledge_rows = db.execute(
+        select(
+            KnowledgePoint.id,
+            KnowledgePoint.name,
+            func.count(SubmissionAnswer.id).label("question_count"),
+            func.sum(case((SubmissionAnswer.is_correct == True, 1), else_=0)).label("correct_count"),
+            func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).label("wrong_count"),
+        )
+        .select_from(SubmissionAnswer)
+        .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+        .join(QuestionKnowledgePoint, QuestionKnowledgePoint.question_id == SubmissionAnswer.question_id)
+        .join(KnowledgePoint, KnowledgePoint.id == QuestionKnowledgePoint.knowledge_point_id)
+        .where(
+            ExamSubmission.student_id == student_id,
+            ExamSubmission.teacher_id == current_user.id,
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
+        .group_by(KnowledgePoint.id, KnowledgePoint.name)
+        .order_by(
+            func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).desc(),
+            func.count(SubmissionAnswer.id).desc(),
+        )
+        .limit(8)
+    ).all()
+    knowledge_points = [
+        {
+            "id": row.id,
+            "name": row.name,
+            "question_count": int(row.question_count or 0),
+            "wrong_count": int(row.wrong_count or 0),
+            "mastery": round((float(row.correct_count or 0) / max(1, int(row.question_count or 0))), 2),
+        }
+        for row in knowledge_rows
+    ]
+
+    question_type_rows = db.execute(
+        select(
+            Question.type,
+            func.count(SubmissionAnswer.id).label("question_count"),
+            func.sum(case((SubmissionAnswer.is_correct == True, 1), else_=0)).label("correct_count"),
+        )
+        .select_from(SubmissionAnswer)
+        .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+        .join(Question, SubmissionAnswer.question_id == Question.id)
+        .where(
+            ExamSubmission.student_id == student_id,
+            ExamSubmission.teacher_id == current_user.id,
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
+        .group_by(Question.type)
+        .order_by(func.count(SubmissionAnswer.id).desc())
+    ).all()
+    question_types = [
+        {
+            "type": row.type,
+            "question_count": int(row.question_count or 0),
+            "accuracy": round((float(row.correct_count or 0) / max(1, int(row.question_count or 0))), 2),
+        }
+        for row in question_type_rows
+    ]
+
+    task_items = db.scalars(
+        select(StudyTask)
+        .where(StudyTask.student_id == student_id)
+        .order_by(StudyTask.priority.asc(), StudyTask.created_at.desc())
+        .limit(6)
+    ).all()
+    pending_task_count = sum(1 for task in task_items if task.status in {"pending", "in_progress"})
+    task_summary = {
+        "pending_count": pending_task_count,
+        "completed_count": sum(1 for task in task_items if task.status == "completed"),
+        "ignored_count": sum(1 for task in task_items if task.status == "ignored"),
+        "estimated_minutes": sum(int(task.estimated_minutes or 0) for task in task_items if task.status in {"pending", "in_progress"}),
+    }
+
+    latest_snapshot = db.scalar(
+        select(StudentProfileSnapshot)
+        .where(StudentProfileSnapshot.student_id == student_id, StudentProfileSnapshot.source_exam_id.in_(exam_ids))
+        .order_by(StudentProfileSnapshot.created_at.desc())
+        .limit(1)
+    ) if exam_ids else None
+    profile_json = latest_snapshot.profile_json if latest_snapshot and isinstance(latest_snapshot.profile_json, dict) else {}
+    weak_knowledge_points = [
+        str(item.get("name") or "").strip()
+        for item in (profile_json.get("weak_knowledge_points") or [])
+        if isinstance(item, dict)
+    ]
+    weak_knowledge_points = [name for name in weak_knowledge_points if name][:4]
+
+    avg_score = round(sum(float(item.total_score or 0) for item in submissions) / len(submissions), 1) if submissions else 0.0
+    avg_correct_rate = round(sum(float(item.correct_rate or 0) for item in submissions) / len(submissions), 2) if submissions else 0.0
+    latest_score = round(float(latest_submission.total_score or 0), 1) if latest_submission else 0.0
+    momentum = 0.0
+    if len(trend) >= 2:
+        momentum = round(float(trend[-1]["score"] or 0) - float(trend[0]["score"] or 0), 1)
+
+    strongest_ability = growth_profile.get("ability_profile", [])[:1]
+    weakest_ability = sorted(growth_profile.get("ability_profile", []), key=lambda item: item.get("value", 0))[:1]
+    coaching_suggestions = [str(item) for item in (growth_profile.get("ai_actions") or []) if str(item).strip()][:4]
+    if weak_knowledge_points:
+        coaching_suggestions.insert(0, f"建议优先围绕 {weak_knowledge_points[0]} 做一次“讲 1 题 + 练 2 题 + 复盘 1 题”的短周期训练。")
+    coaching_suggestions = coaching_suggestions[:4]
+
     return success_response(
         {
-            "student": {"id": student.id, "name": student.name, "email": student.email, "grade_name": student.grade_name},
+            "student": {
+                "id": student.id,
+                "name": student.name,
+                "email": student.email,
+                "phone": student.phone,
+                "avatar_url": student.avatar_url,
+                "grade_name": student.grade_name,
+                "school_name": student.school_name,
+                "status": student.status,
+                "last_login_at": student.last_login_at.isoformat() if student.last_login_at else None,
+            },
             "class": _serialize_class(classroom) if classroom else None,
+            "overview": {
+                "exam_count": len(submissions),
+                "avg_score": avg_score,
+                "latest_score": latest_score,
+                "avg_correct_rate": avg_correct_rate,
+                "momentum": momentum,
+                "pending_review_count": db.scalar(
+                    select(func.count()).select_from(ReviewItem).where(
+                        ReviewItem.student_id == student_id,
+                        ReviewItem.review_status == "pending",
+                        ReviewItem.exam_id.in_(exam_ids if exam_ids else [-1]),
+                    )
+                ) or 0,
+                "active_task_count": pending_task_count,
+                "estimated_study_minutes": task_summary["estimated_minutes"],
+                "risk_level": _teacher_student_risk_level(latest_score, avg_correct_rate),
+            },
+            "ability_profile": growth_profile.get("ability_profile", []),
+            "question_type_distribution": question_types,
+            "knowledge_points": knowledge_points,
+            "trend": trend,
+            "study_tasks": [
+                {
+                    "id": task.id,
+                    "title": task.title,
+                    "task_type": task.task_type,
+                    "status": task.status,
+                    "priority": task.priority,
+                    "estimated_minutes": task.estimated_minutes,
+                    "feedback": task.feedback,
+                    "created_at": task.created_at.isoformat(),
+                }
+                for task in task_items
+            ],
+            "task_summary": task_summary,
+            "ai_insight": {
+                "summary": latest_snapshot.ai_summary if latest_snapshot and latest_snapshot.ai_summary else growth_profile.get("ai_summary"),
+                "coaching_suggestions": coaching_suggestions,
+                "weak_knowledge_points": weak_knowledge_points,
+                "highlight": strongest_ability[0] if strongest_ability else None,
+                "risk_focus": weakest_ability[0] if weakest_ability else None,
+            },
             "latest_summary": {
                 "latest_exam_id": latest_submission.exam_id if latest_submission else None,
+                "latest_exam_title": db.get(Exam, latest_submission.exam_id).title if latest_submission and db.get(Exam, latest_submission.exam_id) else None,
                 "latest_total_score": float(latest_submission.total_score) if latest_submission else None,
+                "latest_submitted_at": latest_submission.submitted_at.isoformat() if latest_submission and latest_submission.submitted_at else None,
             },
         }
     )
@@ -1669,6 +1886,14 @@ def _get_teacher_exam(db: Session, teacher_id: int, exam_id: int) -> Exam:
     if not exam:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exam not found")
     return exam
+
+
+def _teacher_student_risk_level(latest_score: float, avg_correct_rate: float) -> str:
+    if latest_score < 45 or avg_correct_rate < 0.45:
+        return "high"
+    if latest_score < 60 or avg_correct_rate < 0.6:
+        return "medium"
+    return "low"
 
 
 def _replace_question_relations(db: Session, question_id: int, options, knowledge_point_ids) -> None:

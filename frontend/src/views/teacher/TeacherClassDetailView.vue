@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, UserPlus, Download, X, Loader2, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, UserPlus, Download, X, Loader2, Trash2, BrainCircuit } from 'lucide-vue-next'
 import { getClassDetail, getClassStudents, inviteStudentToClass, removeStudentFromClass } from '@/api/teacher'
 
 const route = useRoute()
@@ -42,6 +42,10 @@ onMounted(() => {
 
 const goBack = () => {
   router.back()
+}
+
+const goStudentProfile = (studentId: number) => {
+  router.push(`/app/teacher/students/${studentId}`)
 }
 
 const exportStudentsAsCsv = () => {
@@ -206,9 +210,15 @@ const removeStudent = async (student: any) => {
                 <div class="phone" v-if="student.phone">{{ student.phone }}</div>
               </div>
             </div>
-            <button class="icon-button delete-icon" @click="removeStudent(student)" aria-label="移除学生">
-              <Trash2 :size="16" />
-            </button>
+            <div class="row-actions">
+              <button class="portrait-button" @click="goStudentProfile(Number(student.id))">
+                <BrainCircuit :size="14" />
+                <span>学习画像</span>
+              </button>
+              <button class="icon-button delete-icon" @click="removeStudent(student)" aria-label="移除学生">
+                <Trash2 :size="16" />
+              </button>
+            </div>
           </div>
         </div>
         <div v-else class="empty-state">无学生加入</div>
@@ -414,6 +424,7 @@ const removeStudent = async (student: any) => {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .avatar {
@@ -433,6 +444,7 @@ const removeStudent = async (student: any) => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .name {
@@ -455,6 +467,31 @@ const removeStudent = async (student: any) => {
   height: 30px;
 }
 
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.portrait-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #cbdff6;
+  background: linear-gradient(135deg, #eef7ff 0%, #f7fbff 100%);
+  color: #1d4ed8;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.portrait-button:hover {
+  border-color: #93c5fd;
+  background: linear-gradient(135deg, #e2f0ff 0%, #f0f7ff 100%);
+}
+
 .delete-icon:hover {
   color: #dc2626;
   background: #fff1f2;
@@ -471,6 +508,10 @@ const removeStudent = async (student: any) => {
 
   .stat-value.highlight {
     font-size: 20px;
+  }
+
+  .list-item {
+    align-items: center;
   }
 }
 
