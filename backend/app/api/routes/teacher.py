@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_role
 from app.core.response import success_response
 from app.models.academic import ClassRoom, ClassStudent, KnowledgePoint, Subject
-from app.models.exam import Exam, ExamClass, ExamQuestion, ExamSubmission, SubmissionAnswer
+from app.models.exam import Exam, ExamClass, ExamQuestion, ExamSubmission, SubmissionAnswer, SubmissionBehaviorEvent
 from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
 from app.models.user import AITask, ReviewItem, ReviewLog, StudentProfileSnapshot, StudyPlan, StudyTask, User
 from app.schemas.teacher import AIExamAssembleRequest, AIQuestionGenerateRequest, AIQuestionReviewRequest, AIScoreRequest, ClassCreateRequest, ClassInviteRequest, DeleteRequest, ExamActionRequest, ExamCreateRequest, ExamUpdateRequest, ImportQuestionsRequest, QuestionCreateRequest, QuestionUpdateRequest, RetakeRequestActionRequest, ReviewSubmitRequest
@@ -216,6 +216,97 @@ def get_teacher_dashboard_overview(
             "risk_students": risk_students,
         }
     )
+
+
+@router.get("/teacher/feedback/list")
+def list_user_feedback(
+    category: str | None = Query(default=None),
+    keyword: str | None = Query(default=None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    """
+    教师端查看用户功能反馈列表，支持按类型筛选、关键词筛选与分页。
+    """
+    del current_user
+    safe_category = (category or "").strip().lower()
+    if safe_category and safe_category not in {"bug", "product", "design", "other"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid category")
+
+    safe_keyword = (keyword or "").strip().lower()
+
+    records = db.scalars(
+        select(AITask)
+        .where(AITask.type == "user_feedback")
+        .order_by(AITask.created_at.desc())
+        .limit(1000)
+    ).all()
+
+    filtered: list[dict[str, Any]] = []
+    for task in records:
+        payload = task.request_payload if isinstance(task.request_payload, dict) else {}
+        item_category = str(payload.get("category") or "other").strip().lower()
+        if item_category not in {"bug", "product", "design", "other"}:
+            item_category = "other"
+
+        content = str(payload.get("content") or "").strip()
+        page_path = str(payload.get("page_path") or "").strip() or None
+        client_role = str(payload.get("client_role") or "").strip() or None
+        client_name = str(payload.get("client_name") or "").strip() or None
+        client_email = str(payload.get("client_email") or "").strip() or None
+
+        if safe_category and item_category != safe_category:
+            continue
+
+        if safe_keyword:
+            target_text = " ".join(
+                [
+                    content.lower(),
+                    (page_path or "").lower(),
+                    (client_name or "").lower(),
+                    (client_email or "").lower(),
+                ]
+            )
+            if safe_keyword not in target_text:
+                continue
+
+        raw_images = payload.get("images")
+        images: list[str] = []
+        if isinstance(raw_images, list):
+            for raw in raw_images:
+                item = str(raw or "").strip()
+                if item:
+                    images.append(item)
+
+        filtered.append(
+            {
+                "id": task.id,
+                "category": item_category,
+                "content": content,
+                "images": images,
+                "page_path": page_path,
+                "client_role": client_role,
+                "client_name": client_name,
+                "client_email": client_email,
+                "created_at": task.created_at.isoformat(),
+            }
+        )
+
+    total = len(filtered)
+    start = (page - 1) * page_size
+    end = start + page_size
+    items = filtered[start:end]
+
+    summary = {
+        "bug": sum(1 for row in filtered if row["category"] == "bug"),
+        "product": sum(1 for row in filtered if row["category"] == "product"),
+        "design": sum(1 for row in filtered if row["category"] == "design"),
+        "other": sum(1 for row in filtered if row["category"] == "other"),
+    }
+
+    return success_response({"items": items, "total": total, "summary": summary, "page": page, "page_size": page_size})
 
 
 @router.get("/teacher/classes")
@@ -1263,6 +1354,24 @@ def delete_exam(payload: DeleteRequest, current_user: User = Depends(require_rol
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only finished exams can be deleted")
 
     _cleanup_study_tasks_for_exam(db, exam.id)
+
+    submission_ids = db.scalars(
+        select(ExamSubmission.id).where(ExamSubmission.exam_id == exam.id)
+    ).all()
+    if submission_ids:
+        review_item_ids = db.scalars(
+            select(ReviewItem.id).where(ReviewItem.submission_id.in_(submission_ids))
+        ).all()
+        if review_item_ids:
+            db.query(ReviewLog).filter(ReviewLog.review_item_id.in_(review_item_ids)).delete(synchronize_session=False)
+            db.query(ReviewItem).filter(ReviewItem.id.in_(review_item_ids)).delete(synchronize_session=False)
+
+        db.query(SubmissionAnswer).filter(SubmissionAnswer.submission_id.in_(submission_ids)).delete(synchronize_session=False)
+        db.query(SubmissionBehaviorEvent).filter(SubmissionBehaviorEvent.submission_id.in_(submission_ids)).delete(synchronize_session=False)
+        db.query(ExamSubmission).filter(ExamSubmission.id.in_(submission_ids)).delete(synchronize_session=False)
+
+    db.query(AITask).filter(AITask.resource_type == "exam", AITask.resource_id == exam.id).delete(synchronize_session=False)
+
     db.query(ExamQuestion).filter(ExamQuestion.exam_id == exam.id).delete()
     db.query(ExamClass).filter(ExamClass.exam_id == exam.id).delete()
     db.delete(exam)

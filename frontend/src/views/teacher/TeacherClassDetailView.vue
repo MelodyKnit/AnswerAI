@@ -67,6 +67,12 @@ const filteredStudents = computed(() => {
 const studentCountText = computed(() => `${filteredStudents.value.length} / ${students.value.length}`)
 
 const fetchData = async () => {
+  if (!Number.isFinite(classId) || classId <= 0) {
+    actionMessage.value = '班级ID无效，已返回班级列表'
+    router.replace('/app/teacher/classes')
+    return
+  }
+
   try {
     isLoading.value = true
     const [detailRes, studentsRes, overviewRes] = await Promise.all([

@@ -32,7 +32,7 @@ const features = [
         <Bot :size="20"/>
         <strong>AI Answer</strong>
       </div>
-      <RouterLink class="button--ghost button--sm" to="/app/auth">
+      <RouterLink class="button--ghost button--sm" to="/auth">
         登录系统
       </RouterLink>
     </header>
@@ -85,7 +85,7 @@ const features = [
     <section class="cta-section">
       <div class="cta-content">
         <h2>现在就开始使用</h2>
-        <RouterLink to="/app/auth" class="button button--lg">
+        <RouterLink to="/auth" class="button button--lg">
           登录或注册
           <ArrowRight :size="18" />
         </RouterLink>

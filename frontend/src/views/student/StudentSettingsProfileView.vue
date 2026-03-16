@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue'
 import { Loader2, Save } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import { updateProfile } from '@/api/auth'
+import UserFeedbackButton from '@/components/common/UserFeedbackButton.vue'
 
 const authStore = useAuthStore()
 
@@ -50,6 +51,9 @@ const saveProfile = async () => {
     <header class="head">
       <h1>个人资料</h1>
       <p>仅可修改与本人相关的信息，不包含学校和年级。</p>
+      <div class="head-actions">
+        <UserFeedbackButton context-label="学生-个人资料设置" />
+      </div>
     </header>
 
     <section class="card">
@@ -100,6 +104,10 @@ const saveProfile = async () => {
   margin: 4px 0 0;
   font-size: 13px;
   color: #556278;
+}
+
+.head-actions {
+  margin-top: 8px;
 }
 
 .card {

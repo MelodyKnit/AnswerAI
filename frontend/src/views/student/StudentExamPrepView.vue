@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Clock, FileText, Target, AlertCircle } from 'lucide-vue-next'
+import { ArrowLeft, Clock, FileText, Target, AlertCircle, CalendarRange } from 'lucide-vue-next'
 import http from '@/lib/http'
 
 const route = useRoute()
@@ -13,6 +13,24 @@ const loading = ref(true)
 const starting = ref(false)
 const errorMsg = ref('')
 const canStart = ref(false)
+
+const parseServerTime = (value: string) => {
+  if (!value) return Number.NaN
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(value)
+  return new Date(hasTimezone ? value : `${value}Z`).getTime()
+}
+
+const formatDateTime = (value: string) => {
+  const timestamp = parseServerTime(value)
+  if (Number.isNaN(timestamp)) return '--'
+  const d = new Date(timestamp)
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const examTimeRangeText = () => {
+  if (!exam.value?.start_time || !exam.value?.end_time) return '未设置'
+  return `${formatDateTime(String(exam.value.start_time))} - ${formatDateTime(String(exam.value.end_time))}`
+}
 
 onMounted(async () => {
   try {
@@ -87,6 +105,13 @@ const startExam = async () => {
           <div class="info-text">
             <span class="label">题目数量</span>
             <span class="value">{{ exam.question_count }} 题</span>
+          </div>
+        </div>
+        <div class="info-item">
+          <CalendarRange :size="20" class="info-icon" />
+          <div class="info-text">
+            <span class="label">考试时间区间</span>
+            <span class="value">{{ examTimeRangeText() }}</span>
           </div>
         </div>
       </div>

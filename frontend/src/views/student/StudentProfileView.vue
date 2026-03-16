@@ -4,6 +4,7 @@ import { LogOut, User as UserIcon, Book, Building, ChevronRight, GraduationCap, 
 import { useAuthStore } from '@/stores/auth'
 import http from '@/lib/http'
 import { useRouter } from 'vue-router'
+import UserFeedbackButton from '@/components/common/UserFeedbackButton.vue'
 
 const authStore = useAuthStore()
 const router = useRouter()
@@ -90,6 +91,9 @@ const goProfileSettings = () => {
     <section class="section-block">
       <div class="section-title">
         <h2>系统设置</h2>
+      </div>
+      <div class="feedback-row">
+        <UserFeedbackButton context-label="学生-我的档案" />
       </div>
       <div class="settings-list">
         <div class="settings-item" @click="goProfileSettings">
@@ -306,6 +310,10 @@ const goProfileSettings = () => {
   background: #fff;
   border: 1px solid var(--profile-line);
   overflow: hidden;
+}
+
+.feedback-row {
+  display: flex;
 }
 
 .settings-item {

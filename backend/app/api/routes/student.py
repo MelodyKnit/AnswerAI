@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, UTC, timedelta
 import logging
 from time import perf_counter
@@ -36,6 +37,23 @@ def _study_task_type_label(task_type: str | None) -> str:
     }
     normalized = (task_type or "").strip().lower()
     return mapping.get(normalized, "综合复习")
+
+
+def _extract_target_question_count_from_title(title: str | None, default_count: int = 6) -> int:
+    """
+    从任务标题中提取“（X题）”作为目标题量，避免计划页与任务页题数不一致。
+    """
+    raw_title = (title or "").strip()
+    if not raw_title:
+        return default_count
+    match = re.search(r"[（(]\s*(\d+)\s*题\s*[）)]", raw_title)
+    if not match:
+        return default_count
+    try:
+        value = int(match.group(1))
+    except (TypeError, ValueError):
+        return default_count
+    return max(1, min(value, 30))
 
 GROWTH_PROFILE_CACHE_TTL = timedelta(minutes=20)
 _growth_profile_cache: dict[str, dict[str, Any]] = {}
@@ -841,10 +859,13 @@ def _serialize_exam_list_item(db: Session, exam: Exam, student_id: int) -> dict:
     """
     subject = db.get(Subject, exam.subject_id)
     submission = db.scalar(
-        select(ExamSubmission).where(
+        select(ExamSubmission)
+        .where(
             ExamSubmission.exam_id == exam.id,
             ExamSubmission.student_id == student_id,
+            ExamSubmission.created_at >= exam.created_at,
         )
+        .order_by(ExamSubmission.created_at.desc())
     )
     latest_retake_request = db.scalar(
         select(AITask)
@@ -856,6 +877,34 @@ def _serialize_exam_list_item(db: Session, exam: Exam, student_id: int) -> dict:
         )
         .order_by(AITask.created_at.desc())
     )
+
+    submitted_statuses = {"submitted", "completed", "reviewed"}
+    answered_count = 0
+    if submission:
+        answered_count = db.scalar(
+            select(func.count())
+            .select_from(SubmissionAnswer)
+            .where(
+                SubmissionAnswer.submission_id == submission.id,
+                (SubmissionAnswer.answer_content != None) | (SubmissionAnswer.answer_text != None),
+            )
+        ) or 0
+
+    has_submission_evidence = False
+    if submission:
+        has_submission_evidence = bool(
+            answered_count > 0
+            or float(submission.total_score or 0) > 0
+            or str(submission.review_status or "").lower() == "reviewed"
+        )
+
+    has_real_submission = bool(
+        submission
+        and str(submission.status or "").lower() in submitted_statuses
+        and submission.submitted_at is not None
+        and has_submission_evidence
+    )
+
     return {
         "id": exam.id,
         "title": exam.title,
@@ -865,7 +914,7 @@ def _serialize_exam_list_item(db: Session, exam: Exam, student_id: int) -> dict:
         "start_time": _as_utc_iso(exam.start_time),
         "end_time": _as_utc_iso(exam.end_time),
         "submission_status": submission.status if submission else None,
-        "has_submitted": bool(submission and submission.status in {"submitted", "reviewed"}),
+        "has_submitted": has_real_submission,
         "retake_request_status": latest_retake_request.status if latest_retake_request else None,
         "retake_request_created_at": latest_retake_request.created_at.isoformat() if latest_retake_request else None,
     }
@@ -980,6 +1029,16 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
         .order_by(StudyTask.completed_at.desc(), StudyTask.created_at.desc())
         .limit(50)
     ).all()
+    completed_tasks = db.scalars(
+        select(StudyTask)
+        .where(
+            StudyTask.student_id == current_user.id,
+            StudyTask.plan_id.in_(valid_plan_subquery),
+            StudyTask.status == "completed",
+        )
+        .order_by(StudyTask.completed_at.desc(), StudyTask.created_at.desc())
+        .limit(100)
+    ).all()
     serialized = []
     type_counter: dict[str, int] = {}
     pending_count = 0
@@ -1033,6 +1092,26 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
             }
         )
 
+    completed_serialized = []
+    for t in completed_tasks:
+        task_type = t.task_type or ""
+        task_type_label = _study_task_type_label(task_type)
+        completed_serialized.append(
+            {
+                "id": t.id,
+                "title": t.title,
+                "content": t.feedback or (f"任务类型：{task_type_label}" if task_type else "已完成复习任务"),
+                "status": t.status,
+                "priority": t.priority,
+                "task_type": task_type,
+                "task_type_label": task_type_label,
+                "estimated_minutes": t.estimated_minutes,
+                "created_at": t.created_at.isoformat(),
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                "feedback": t.feedback,
+            }
+        )
+
     focus_types = [item[0] for item in sorted(type_counter.items(), key=lambda item: item[1], reverse=True)[:3]]
     active_count = pending_count + in_progress_count
     readiness_score = max(45, min(95, 100 - active_count * 6 + completed_count * 4))
@@ -1062,7 +1141,16 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
         ai_actions.append(f"优先关注：{'、'.join(focus_types)}。")
 
     ai_overview["ignored_count"] = len(ignored_serialized)
-    return success_response({"tasks": serialized, "ignored_tasks": ignored_serialized, "ai_overview": ai_overview, "ai_actions": ai_actions})
+    ai_overview["completed_count"] = len(completed_serialized)
+    return success_response(
+        {
+            "tasks": serialized,
+            "ignored_tasks": ignored_serialized,
+            "completed_tasks": completed_serialized,
+            "ai_overview": ai_overview,
+            "ai_actions": ai_actions,
+        }
+    )
 
 
 @router.post("/student/study-tasks/action")
@@ -1133,6 +1221,8 @@ def get_study_task_coaching(
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
 
+    target_question_count = _extract_target_question_count_from_title(task.title, default_count=6)
+
     plan = db.get(StudyPlan, task.plan_id)
     source_exam_id = int(plan.source_exam_id or 0) if plan else 0
 
@@ -1143,7 +1233,7 @@ def get_study_task_coaching(
         .where(ExamSubmission.student_id == current_user.id)
         .where(SubmissionAnswer.is_correct == False)
         .order_by(SubmissionAnswer.updated_at.desc())
-        .limit(80)
+        .limit(max(80, target_question_count * 8))
     )
     if task.task_type == "wrong_question_review" and source_exam_id > 0:
         wrong_query = wrong_query.where(ExamSubmission.exam_id == source_exam_id)
@@ -1187,7 +1277,7 @@ def get_study_task_coaching(
                 "practice_status": practice_status,
             }
         )
-        if len(practice_items) >= 6:
+        if len(practice_items) >= target_question_count:
             break
 
     if not practice_items:
@@ -1197,12 +1287,16 @@ def get_study_task_coaching(
             .join(Question, SubmissionAnswer.question_id == Question.id)
             .where(ExamSubmission.student_id == current_user.id)
             .order_by(SubmissionAnswer.updated_at.desc())
-            .limit(6)
+            .limit(max(20, target_question_count * 4))
         )
         if task.task_type == "wrong_question_review" and source_exam_id > 0:
             fallback_query = fallback_query.where(ExamSubmission.exam_id == source_exam_id)
         fallback_rows = db.execute(fallback_query).all()
+        fallback_seen_question_ids: set[int] = set()
         for answer, question, submission in fallback_rows:
+            if question.id in fallback_seen_question_ids:
+                continue
+            fallback_seen_question_ids.add(question.id)
             student_answer = parse_answer(answer.answer_content) if answer.answer_content else answer.answer_text
             practice_status = classify_practice_status(answer, student_answer)
             practice_items.append(
@@ -1217,6 +1311,8 @@ def get_study_task_coaching(
                     "practice_status": practice_status,
                 }
             )
+            if len(practice_items) >= target_question_count:
+                break
 
     estimated_minutes = int(task.estimated_minutes or 20)
     drill_steps = [
@@ -1238,6 +1334,7 @@ def get_study_task_coaching(
                 "title": task.title,
                 "task_type": task.task_type,
                 "task_type_label": _study_task_type_label(task.task_type),
+                "target_question_count": target_question_count,
                 "estimated_minutes": estimated_minutes,
                 "status": task.status,
             },

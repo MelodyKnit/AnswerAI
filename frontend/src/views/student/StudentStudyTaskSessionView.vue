@@ -51,7 +51,8 @@ const displayTaskTitle = computed(() => {
   if ((coachingData.value?.task?.task_type || task.value?.task_type) !== 'wrong_question_review') {
     return rawTitle
   }
-  const questionCount = practiceItems.value.length
+  const targetQuestionCount = Number(coachingData.value?.task?.target_question_count || 0)
+  const questionCount = targetQuestionCount > 0 ? targetQuestionCount : practiceItems.value.length
   const normalizedTitle = rawTitle.replace(/（\d+题）/g, '').replace(/\(\d+题\)/g, '').trim()
   if (questionCount <= 0) return normalizedTitle
   return `${normalizedTitle}（${questionCount}题）`

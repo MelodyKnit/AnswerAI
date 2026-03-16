@@ -126,8 +126,42 @@ export interface TeacherStudentPortrait {
   }
 }
 
+export interface TeacherFeedbackItem {
+  id: number
+  category: 'bug' | 'product' | 'design' | 'other' | string
+  content: string
+  images: string[]
+  page_path?: string | null
+  client_role?: string | null
+  client_name?: string | null
+  client_email?: string | null
+  created_at: string
+}
+
+export interface TeacherFeedbackListResponse {
+  items: TeacherFeedbackItem[]
+  total: number
+  summary: {
+    bug: number
+    product: number
+    design: number
+    other: number
+  }
+  page: number
+  page_size: number
+}
+
 export const getTeacherDashboardOverview = (params?: { subject?: string }) => {
   return http.get('/teacher/dashboard/overview', { params }) as Promise<TeacherDashboardOverview>
+}
+
+export const getTeacherFeedbackList = (params?: {
+  category?: 'bug' | 'product' | 'design' | 'other'
+  keyword?: string
+  page?: number
+  page_size?: number
+}) => {
+  return http.get('/teacher/feedback/list', { params }) as Promise<TeacherFeedbackListResponse>
 }
 
 // --- 5. 教师班级与学生管理接口 ---

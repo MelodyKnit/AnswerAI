@@ -2,8 +2,9 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { RouterView, useRoute } from 'vue-router'
-import { Bell, ChevronRight, LogOut, Shield, User } from 'lucide-vue-next'
+import { Bell, ChevronRight, LogOut, MessageSquareWarning, Shield, User } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
+import UserFeedbackButton from '@/components/common/UserFeedbackButton.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -14,12 +15,13 @@ const isSettingsHome = computed(() => route.path === '/app/teacher/settings')
 const goToProfile = () => router.push('/app/teacher/settings/profile')
 const goToNotification = () => router.push('/app/teacher/settings/notifications')
 const goToSecurity = () => router.push('/app/teacher/settings/security')
+const goToFeedbackManage = () => router.push('/app/teacher/feedback')
 
 const handleLogout = () => {
   const confirmed = window.confirm('确认退出登录吗？')
   if (!confirmed) return
   authStore.logout()
-  router.push('/app/auth')
+  router.push('/auth')
 }
 </script>
 
@@ -38,6 +40,10 @@ const handleLogout = () => {
         <p>{{ authStore.user?.email || '未绑定邮箱' }}</p>
       </div>
     </section>
+
+    <div class="feedback-row">
+      <UserFeedbackButton context-label="教师-设置主页" />
+    </div>
 
     <section class="menu-list">
       <button class="menu-item" @click="goToProfile">
@@ -60,6 +66,14 @@ const handleLogout = () => {
         <span class="left">
           <Shield :size="18" />
           账号与安全
+        </span>
+        <ChevronRight :size="16" />
+      </button>
+
+      <button class="menu-item" @click="goToFeedbackManage">
+        <span class="left">
+          <MessageSquareWarning :size="18" />
+          反馈管理
         </span>
         <ChevronRight :size="16" />
       </button>
@@ -138,6 +152,10 @@ const handleLogout = () => {
   margin: 4px 0 0;
   color: #556278;
   font-size: 13px;
+}
+
+.feedback-row {
+  display: flex;
 }
 
 .menu-list {

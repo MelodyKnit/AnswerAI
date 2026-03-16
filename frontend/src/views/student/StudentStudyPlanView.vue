@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, Clock3, Target, Sparkles } from 'lucide-vue-next'
+import { BookOpen, Clock3, Target, Sparkles, History, X } from 'lucide-vue-next'
 import http from '@/lib/http'
 import { mapStudyTaskTypeLabel } from '@/utils/studyTask'
 
 const router = useRouter()
 const tasks = ref<any[]>([])
 const ignoredTasks = ref<any[]>([])
+const completedTasks = ref<any[]>([])
 const showIgnored = ref(false)
+const showCompleted = ref(false)
+const activeHistory = ref<any | null>(null)
 const aiOverview = ref<any>(null)
 const aiActions = ref<string[]>([])
 const taskLoading = ref(false)
@@ -17,6 +20,7 @@ const refreshTasks = async () => {
   const res: any = await http.get('/student/study-tasks')
   tasks.value = res?.tasks || []
   ignoredTasks.value = res?.ignored_tasks || []
+  completedTasks.value = res?.completed_tasks || []
   aiOverview.value = res?.ai_overview || null
   aiActions.value = res?.ai_actions || []
 }
@@ -49,6 +53,14 @@ const getStartButtonText = (task: any) => {
 
 const openTask = async (task: any) => {
   await router.push(`/app/student/study-plan/tasks/${task.id}`)
+}
+
+const openHistory = (task: any) => {
+  activeHistory.value = task
+}
+
+const closeHistory = () => {
+  activeHistory.value = null
 }
 
 const ignoreTask = async (task: any) => {
@@ -216,12 +228,75 @@ onMounted(async () => {
       </div>
     </section>
 
+    <section v-if="completedTasks.length" class="completed-section">
+      <button class="completed-toggle" @click="showCompleted = !showCompleted">
+        <span>复习历史（{{ completedTasks.length }}）</span>
+        <span>{{ showCompleted ? '收起' : '展开' }}</span>
+      </button>
+
+      <div v-if="showCompleted" class="completed-list">
+        <article v-for="task in completedTasks" :key="`completed-${task.id}`" class="completed-card">
+          <div class="completed-head">
+            <h3>{{ task.title }}</h3>
+            <span class="completed-tag">已完成</span>
+          </div>
+          <p>{{ task.content || '该任务已完成。' }}</p>
+          <div class="completed-meta">
+            <span>{{ task.task_type_label || mapStudyTaskTypeLabel(task.task_type) }}</span>
+            <span>{{ task.estimated_minutes || 20 }} 分钟</span>
+            <span>完成于 {{ formatDate(task.completed_at || task.created_at) }}</span>
+          </div>
+          <div class="completed-actions">
+            <button class="history-btn" @click="openHistory(task)">
+              <History :size="14" />
+              查看复习历史
+            </button>
+            <button class="danger-btn" :disabled="taskLoading" @click="deleteTask(task)">删除</button>
+            <button class="start-btn" @click="openTask(task)">再次复习</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <section v-if="!tasks.length" class="empty-state">
       <div class="empty-card">
         <h3>当前没有待完成任务</h3>
         <p>继续保持，完成下一场考试后会自动生成新的复习计划。</p>
       </div>
     </section>
+
+    <div v-if="activeHistory" class="history-mask" @click.self="closeHistory">
+      <div class="history-card">
+        <div class="history-head">
+          <h3>复习历史</h3>
+          <button class="close-btn" @click="closeHistory" aria-label="关闭">
+            <X :size="16" />
+          </button>
+        </div>
+
+        <div class="history-item">
+          <span>任务名称</span>
+          <strong>{{ activeHistory.title }}</strong>
+        </div>
+        <div class="history-item">
+          <span>任务类型</span>
+          <strong>{{ activeHistory.task_type_label || mapStudyTaskTypeLabel(activeHistory.task_type) }}</strong>
+        </div>
+        <div class="history-item">
+          <span>预计时长</span>
+          <strong>{{ activeHistory.estimated_minutes || 20 }} 分钟</strong>
+        </div>
+        <div class="history-item">
+          <span>完成时间</span>
+          <strong>{{ formatDate(activeHistory.completed_at || activeHistory.created_at) }}</strong>
+        </div>
+
+        <div class="history-feedback">
+          <span>复盘记录</span>
+          <p>{{ activeHistory.feedback || '暂无复盘文字记录。' }}</p>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -504,6 +579,11 @@ onMounted(async () => {
   gap: 8px;
 }
 
+.completed-section {
+  display: grid;
+  gap: 8px;
+}
+
 .ignored-toggle {
   width: 100%;
   border: 1px solid #cedad3;
@@ -518,7 +598,24 @@ onMounted(async () => {
   font-weight: 600;
 }
 
+.completed-toggle {
+  border: 1px solid #d6dee0;
+  border-radius: 11px;
+  background: #f8fafb;
+  color: #455468;
+  font-size: 13px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .ignored-list {
+  display: grid;
+  gap: 8px;
+}
+
+.completed-list {
   display: grid;
   gap: 8px;
 }
@@ -528,6 +625,154 @@ onMounted(async () => {
   border-radius: 12px;
   background: rgba(248, 251, 249, 0.9);
   padding: 10px;
+}
+
+.completed-card {
+  border: 1px solid #dce4e8;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.completed-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.completed-head h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #203126;
+}
+
+.completed-tag {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: #334155;
+  background: #f1f5f9;
+  border: 1px solid #dbe4ee;
+}
+
+.completed-card p {
+  margin: 0;
+  color: #4f6458;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.completed-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: #63776a;
+}
+
+.completed-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.history-btn {
+  border: 1px solid #d3dde6;
+  background: #f8fafc;
+  color: #334155;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 120;
+  padding: 14px;
+}
+
+.history-card {
+  width: min(520px, 100%);
+  border-radius: 14px;
+  border: 1px solid #cddbd3;
+  background: #fff;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.history-head h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #1f2a1f;
+}
+
+.close-btn {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e3ece7;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.history-item span {
+  color: #607466;
+  font-size: 12px;
+}
+
+.history-item strong {
+  color: #1f2a1f;
+  font-size: 13px;
+}
+
+.history-feedback {
+  border: 1px solid #e3ece7;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.history-feedback span {
+  color: #607466;
+  font-size: 12px;
+}
+
+.history-feedback p {
+  margin: 0;
+  color: #2f4035;
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .ignored-head {
@@ -581,7 +826,7 @@ onMounted(async () => {
 
 .empty-card {
   background: #fff;
-  border: 1px dashed #ccd6cc;
+  border: 1px solid #dde5ea;
   border-radius: 14px;
   padding: 26px 16px;
   text-align: center;
@@ -594,12 +839,11 @@ onMounted(async () => {
 }
 
 .empty-card p {
-  background: rgba(246, 251, 248, 0.88);
-  border: 1px dashed #bfcdc2;
+  margin: 0;
+  background: transparent;
+  border: none;
   color: var(--ink-600);
 }
-</style>
-
 
 @media (min-width: 768px) {
   .study-plan-view {
@@ -609,3 +853,4 @@ onMounted(async () => {
     padding: calc(16px + 40px) 32px calc(24px + env(safe-area-inset-bottom));
   }
 }
+</style>

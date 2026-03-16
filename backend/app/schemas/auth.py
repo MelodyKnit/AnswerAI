@@ -43,3 +43,10 @@ class ProfileUpdateRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     old_password: str
     new_password: str = Field(min_length=8)
+
+
+class UserFeedbackCreateRequest(BaseModel):
+    category: str = Field(pattern="^(bug|product|design|other)$")
+    content: str = Field(min_length=5, max_length=2000)
+    images: list[str] = Field(default_factory=list, max_length=6)
+    page_path: str | None = Field(default=None, max_length=255)

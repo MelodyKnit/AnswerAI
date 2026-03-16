@@ -31,6 +31,8 @@ import TeacherSettingsView from '../views/teacher/TeacherSettingsView.vue'
 import TeacherSettingsProfileView from '../views/teacher/TeacherSettingsProfileView.vue'
 import TeacherSettingsNotificationsView from '../views/teacher/TeacherSettingsNotificationsView.vue'
 import TeacherSettingsSecurityView from '../views/teacher/TeacherSettingsSecurityView.vue'
+import TeacherFeedbackManageView from '../views/teacher/TeacherFeedbackManageView.vue'
+import TeacherClassCreateView from '../views/teacher/TeacherClassCreateView.vue'
 import TeacherClassDetailView from '../views/teacher/TeacherClassDetailView.vue'
 import TeacherClassesView from '../views/teacher/TeacherClassesView.vue'
 import TeacherExamDetailView from '../views/teacher/TeacherExamDetailView.vue'
@@ -153,6 +155,12 @@ const router = createRouter({
           meta: { title: '班级管理', section: 'teacher' }
         },
         {
+          path: 'teacher/classes/create',
+          name: 'teacher-class-create',
+          component: TeacherClassCreateView,
+          meta: { title: '创建班级', section: 'teacher', hideNav: true }
+        },
+        {
           path: 'teacher/classes/:id',
           name: 'teacher-class-detail',
           component: TeacherClassDetailView,
@@ -240,6 +248,12 @@ const router = createRouter({
               component: TeacherSettingsSecurityView,
             },
           ],
+        },
+        {
+          path: 'teacher/feedback',
+          name: 'teacher-feedback-manage',
+          component: TeacherFeedbackManageView,
+          meta: { title: '反馈管理', section: 'teacher', hideNav: true }
         },
       ],
     },

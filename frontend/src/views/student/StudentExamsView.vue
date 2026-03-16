@@ -97,7 +97,7 @@ const getExamState = (exam: Exam) => {
 }
 
 const canViewResult = (exam: Exam) => {
-  return Boolean(exam.has_submitted || ['submitted', 'reviewed'].includes(String(exam.submission_status || '')))
+  return Boolean(exam.has_submitted)
 }
 
 const getActionText = (exam: Exam) => {
@@ -189,7 +189,11 @@ const formatDate = (dateStr: string) => {
             {{ getActionText(exam) }}
           </button>
         </div>
-        <div v-if="canViewResult(exam)" class="retake-row">
+        <div
+          v-if="canViewResult(exam)"
+          class="retake-row"
+          :class="{ 'has-status': Boolean(getRetakeStatusLabel(exam)) }"
+        >
           <span v-if="getRetakeStatusLabel(exam)" class="retake-status">{{ getRetakeStatusLabel(exam) }}</span>
           <button
             v-if="canApplyRetake(exam)"
@@ -388,31 +392,46 @@ const formatDate = (dateStr: string) => {
 }
 
 .retake-row {
-  margin-top: 8px;
+  margin-top: 2px;
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   gap: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #d7e2ec;
+}
+
+.retake-row.has-status {
+  justify-content: space-between;
 }
 
 .retake-status {
   font-size: 12px;
-  color: #475569;
+  color: #64748b;
 }
 
 .retake-btn {
-  border: 1px solid #0f766e;
-  background: #ecfdf5;
-  color: #065f46;
+  border: 1px solid #c6d3e1;
+  background: #f8fafc;
+  color: #334155;
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 7px 13px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  line-height: 1;
+  transition: all 0.2s ease;
+}
+
+.retake-btn:hover {
+  border-color: #94a3b8;
+  color: #0f172a;
+  background: #f1f5f9;
 }
 
 .retake-btn--approved {
   background: #0f766e;
   color: #fff;
+  border-color: #0f766e;
 }
 
 .button {

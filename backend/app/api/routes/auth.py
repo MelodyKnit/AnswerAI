@@ -1,6 +1,7 @@
 from datetime import datetime, UTC
 import logging
 from time import perf_counter
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -11,8 +12,8 @@ from app.core.config import settings
 from app.core.response import success_response
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.academic import ClassRoom, ClassStudent
-from app.models.user import User
-from app.schemas.auth import ChangePasswordRequest, LoginRequest, ProfileUpdateRequest, RegisterRequest
+from app.models.user import AITask, User
+from app.schemas.auth import ChangePasswordRequest, LoginRequest, ProfileUpdateRequest, RegisterRequest, UserFeedbackCreateRequest
 
 
 router = APIRouter()
@@ -147,6 +148,53 @@ def change_password(payload: ChangePasswordRequest, current_user: User = Depends
     db.add(current_user)
     db.commit()
     return success_response({"success": True}, "password changed")
+
+
+@router.post("/users/feedback/create")
+def create_user_feedback(
+    payload: UserFeedbackCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    创建用户反馈记录，支持文本与图片证据。
+    """
+    normalized_images: list[str] = []
+    for raw in payload.images:
+        item = str(raw or "").strip()
+        if not item:
+            continue
+        if len(item) > 500:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="图片地址过长")
+        normalized_images.append(item)
+
+    if len(normalized_images) > 6:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="最多上传 6 张图片")
+
+    feedback_task = AITask(
+        task_id=f"feedback_{current_user.id}_{int(datetime.now(UTC).timestamp())}_{uuid4().hex[:8]}",
+        type="user_feedback",
+        status="submitted",
+        progress=100,
+        resource_type="user",
+        resource_id=current_user.id,
+        request_payload={
+            "category": payload.category,
+            "content": payload.content.strip(),
+            "images": normalized_images,
+            "page_path": (payload.page_path or "").strip() or None,
+            "client_role": current_user.role,
+            "client_name": current_user.name,
+            "client_email": current_user.email,
+        },
+        created_by=current_user.id,
+        finished_at=datetime.now(UTC),
+    )
+
+    db.add(feedback_task)
+    db.commit()
+    db.refresh(feedback_task)
+    return success_response({"feedback_id": feedback_task.id, "status": feedback_task.status}, "feedback submitted")
 
 
 def _serialize_user(user: User) -> dict:

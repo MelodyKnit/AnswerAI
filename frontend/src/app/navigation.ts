@@ -27,8 +27,8 @@ export const primaryNavigation: NavigationItem[] = [
   },
   {
     label: '登录',
-    to: '/app/auth',
-    matchPrefix: '/app/auth',
+    to: '/auth',
+    matchPrefix: '/auth',
     icon: PanelsTopLeft,
   },
   {
