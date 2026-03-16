@@ -47,6 +47,9 @@ const scheduleForm = ref({
   start_time: '',
   end_time: '',
 })
+type MetricModalKey = 'duration' | 'score' | 'wrongRate' | 'participants'
+const metricModalVisible = ref(false)
+const activeMetric = ref<MetricModalKey>('score')
 
 const boundClassCount = computed(() => {
   return Array.isArray(exam.value?.class_ids) ? exam.value.class_ids.length : 0
@@ -166,6 +169,116 @@ const overallWrongRate = computed(() => {
 const topWrongQuestions = computed(() => (insights.value?.top_wrong_questions || []) as Array<any>)
 const aiEasyMistakes = computed(() => (insights.value?.ai_summary?.easy_mistakes || []) as string[])
 const aiSuggestions = computed(() => (insights.value?.ai_summary?.teaching_suggestions || []) as string[])
+const metricDistributions = computed(() => (insights.value?.metric_distributions || {}) as Record<string, Array<{ range: string, count: number }>>)
+const durationDistribution = computed(() => metricDistributions.value.duration_minutes || [])
+const scoreDistribution = computed(() => metricDistributions.value.score || [])
+const wrongRateDistribution = computed(() => metricDistributions.value.wrong_rate || [])
+const startedStudents = computed(() => (insights.value?.participants?.started || []) as Array<any>)
+const notStartedStudents = computed(() => (insights.value?.participants?.not_started || []) as Array<any>)
+
+const metricModalTitle = computed(() => {
+  if (activeMetric.value === 'duration') return '平均做题时长分布'
+  if (activeMetric.value === 'score') return '平均得分分布'
+  if (activeMetric.value === 'wrongRate') return '整体出错率分布'
+  return '参与学生明细'
+})
+
+const openMetricModal = (metric: MetricModalKey) => {
+  activeMetric.value = metric
+  metricModalVisible.value = true
+}
+
+const closeMetricModal = () => {
+  metricModalVisible.value = false
+}
+
+const buildDistributionBarOption = (items: Array<{ range: string, count: number }>, color: string) => {
+  return {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: Array<{ axisValue: string, value: number }>) => {
+        const first = params?.[0]
+        if (!first) return ''
+        return `${first.axisValue}<br/>人数 ${first.value}`
+      },
+    },
+    grid: { left: 28, right: 16, top: 12, bottom: 28 },
+    xAxis: {
+      type: 'category',
+      data: items.map((item) => item.range),
+      axisLine: { lineStyle: { color: '#d4dbe5' } },
+      axisLabel: { color: '#556278', fontSize: 11 },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+      axisLabel: { color: '#556278' },
+      splitLine: { lineStyle: { color: '#ecf0f5' } },
+    },
+    series: [
+      {
+        type: 'bar',
+        data: items.map((item) => Number(item.count || 0)),
+        itemStyle: { color, borderRadius: [8, 8, 0, 0] },
+        barMaxWidth: 30,
+      },
+    ],
+  }
+}
+
+const durationDistOption = computed(() => buildDistributionBarOption(durationDistribution.value, '#1d4ed8'))
+const scoreDistOption = computed(() => buildDistributionBarOption(scoreDistribution.value, '#16a34a'))
+
+const wrongRateDistOption = computed(() => {
+  const items = wrongRateDistribution.value
+  return {
+    tooltip: {
+      trigger: 'item',
+      formatter: (params: { name: string, value: number }) => `${params.name}<br/>人数 ${params.value}`,
+    },
+    legend: {
+      bottom: 0,
+      icon: 'circle',
+      textStyle: { color: '#556278', fontSize: 12 },
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['48%', '72%'],
+        center: ['50%', '42%'],
+        label: { show: false },
+        data: items.map((item, idx) => ({
+          name: item.range,
+          value: Number(item.count || 0),
+          itemStyle: {
+            color: ['#0f766e', '#14b8a6', '#f59e0b', '#fb7185', '#ef4444'][idx % 5],
+          },
+        })),
+      },
+    ],
+  }
+})
+
+const activeMetricOption = computed(() => {
+  if (activeMetric.value === 'duration') return durationDistOption.value
+  if (activeMetric.value === 'score') return scoreDistOption.value
+  return wrongRateDistOption.value
+})
+
+const metricHasChartData = computed(() => {
+  if (activeMetric.value === 'duration') return durationDistribution.value.length > 0
+  if (activeMetric.value === 'score') return scoreDistribution.value.length > 0
+  if (activeMetric.value === 'wrongRate') return wrongRateDistribution.value.length > 0
+  return false
+})
+
+const getParticipantStatusClass = (status: string) => {
+  if (status === 'reviewed') return 'reviewed'
+  if (status === 'submitted' || status === 'completed') return 'submitted'
+  return 'progress'
+}
 
 const getQuestionAxisLabel = (item: any, index: number) => {
   const orderNo = Number(item?.order_no)
@@ -476,33 +589,37 @@ const handleSaveSchedule = async () => {
       </section>
 
       <section class="kpi-grid">
-        <article class="kpi-card">
+        <article class="kpi-card kpi-card--interactive" role="button" tabindex="0" @click="openMetricModal('duration')" @keydown.enter="openMetricModal('duration')">
           <div class="kpi-head">
             <Clock3 :size="16" class="kpi-icon clock" />
             <span>平均做题时长</span>
           </div>
           <p class="kpi-value">{{ avgDuration }} 分钟</p>
+          <p class="kpi-tip">点击查看分布</p>
         </article>
-        <article class="kpi-card">
+        <article class="kpi-card kpi-card--interactive" role="button" tabindex="0" @click="openMetricModal('score')" @keydown.enter="openMetricModal('score')">
           <div class="kpi-head">
             <Target :size="16" class="kpi-icon target" />
             <span>平均得分</span>
           </div>
           <p class="kpi-value">{{ avgScore }} 分</p>
+          <p class="kpi-tip">点击查看分布</p>
         </article>
-        <article class="kpi-card">
+        <article class="kpi-card kpi-card--interactive" role="button" tabindex="0" @click="openMetricModal('wrongRate')" @keydown.enter="openMetricModal('wrongRate')">
           <div class="kpi-head">
             <AlertTriangle :size="16" class="kpi-icon alert" />
             <span>整体出错率</span>
           </div>
           <p class="kpi-value">{{ overallWrongRate }}%</p>
+          <p class="kpi-tip">点击查看分布</p>
         </article>
-        <article class="kpi-card">
+        <article class="kpi-card kpi-card--interactive" role="button" tabindex="0" @click="openMetricModal('participants')" @keydown.enter="openMetricModal('participants')">
           <div class="kpi-head">
             <Users :size="16" class="kpi-icon users" />
             <span>参与人数</span>
           </div>
           <p class="kpi-value">{{ participantText }}</p>
+          <p class="kpi-tip">点击查看名单</p>
         </article>
       </section>
 
@@ -691,6 +808,60 @@ const handleSaveSchedule = async () => {
           </section>
         </div>
       </div>
+
+      <div v-if="metricModalVisible" class="metric-modal" @click.self="closeMetricModal">
+        <div class="metric-modal-card">
+          <div class="metric-modal-header">
+            <h3>{{ metricModalTitle }}</h3>
+            <button class="icon-button" @click="closeMetricModal" aria-label="关闭统计弹层">
+              <X :size="18" />
+            </button>
+          </div>
+
+          <template v-if="activeMetric === 'participants'">
+            <div class="participant-summary">
+              <span>已参与 {{ startedStudents.length }} 人</span>
+              <span>未参与 {{ notStartedStudents.length }} 人</span>
+            </div>
+            <div class="participant-grid">
+              <section class="participant-panel">
+                <h4>已参与</h4>
+                <div v-if="startedStudents.length" class="participant-list">
+                  <article v-for="item in startedStudents" :key="`started-${item.student_id}`" class="participant-item">
+                    <div>
+                      <p class="participant-name">{{ item.student_name }}</p>
+                      <p class="participant-class">{{ item.class_name || '未分班' }}</p>
+                    </div>
+                    <span class="participant-status" :class="`status-${getParticipantStatusClass(item.status)}`">{{ item.status_label || '已参与' }}</span>
+                  </article>
+                </div>
+                <div v-else class="empty-state">暂无参与记录</div>
+              </section>
+
+              <section class="participant-panel">
+                <h4>未参与</h4>
+                <div v-if="notStartedStudents.length" class="participant-list">
+                  <article v-for="item in notStartedStudents" :key="`pending-${item.student_id}`" class="participant-item">
+                    <div>
+                      <p class="participant-name">{{ item.student_name }}</p>
+                      <p class="participant-class">{{ item.class_name || '未分班' }}</p>
+                    </div>
+                    <span class="participant-status status-pending">未参与</span>
+                  </article>
+                </div>
+                <div v-else class="empty-state">全部学生已参与</div>
+              </section>
+            </div>
+          </template>
+
+          <template v-else>
+            <div v-if="metricHasChartData" class="metric-chart-wrap">
+              <VChart class="metric-chart" :option="activeMetricOption" autoresize />
+            </div>
+            <div v-else class="empty-state">当前暂无可视化数据</div>
+          </template>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -865,6 +1036,18 @@ const handleSaveSchedule = async () => {
   gap: 6px;
 }
 
+.kpi-card--interactive {
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.kpi-card--interactive:hover,
+.kpi-card--interactive:focus-visible {
+  transform: translateY(-1px);
+  border-color: #c8d6e5;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
 .kpi-head {
   display: flex;
   align-items: center;
@@ -878,6 +1061,12 @@ const handleSaveSchedule = async () => {
   font-size: 20px;
   font-weight: 700;
   color: #0f172a;
+}
+
+.kpi-tip {
+  margin: 0;
+  font-size: 11px;
+  color: #64748b;
 }
 
 .kpi-icon.clock { color: #1d4ed8; }
@@ -1177,6 +1366,137 @@ const handleSaveSchedule = async () => {
   padding: 12px;
 }
 
+.metric-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 72;
+  background: rgba(15, 23, 42, 0.34);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+}
+
+.metric-modal-card {
+  width: min(760px, 100%);
+  max-height: min(82dvh, 860px);
+  overflow: auto;
+  border-radius: 18px;
+  border: 1px solid #dce5ef;
+  background: linear-gradient(180deg, #fbfdff 0%, #f3f8fc 100%);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.metric-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.metric-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.metric-chart-wrap {
+  border: 1px solid #e4eaf2;
+  border-radius: 12px;
+  background: #fff;
+  padding: 8px;
+}
+
+.metric-chart {
+  width: 100%;
+  height: 290px;
+}
+
+.participant-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #556278;
+}
+
+.participant-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.participant-panel {
+  border: 1px solid #e4eaf2;
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+}
+
+.participant-panel h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.participant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.participant-item {
+  border: 1px solid #edf1f6;
+  border-radius: 10px;
+  background: #fbfdff;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.participant-name {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.participant-class {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.participant-status {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-progress {
+  color: #1d4ed8;
+  background: rgba(29, 78, 216, 0.12);
+}
+
+.status-submitted {
+  color: #0f766e;
+  background: rgba(15, 118, 110, 0.12);
+}
+
+.status-reviewed {
+  color: #0f766e;
+  background: rgba(20, 184, 166, 0.16);
+}
+
+.status-pending {
+  color: #64748b;
+  background: rgba(148, 163, 184, 0.14);
+}
+
 .settings-modal-card {
   width: min(760px, 100%);
   max-height: min(86dvh, 900px);
@@ -1356,6 +1676,10 @@ const handleSaveSchedule = async () => {
   }
 
   .schedule-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .participant-grid {
     grid-template-columns: 1fr;
   }
 

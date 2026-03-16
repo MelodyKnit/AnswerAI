@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Activity, ArrowLeft, BrainCircuit, ShieldAlert, Sparkles, Target, TrendingUp, TriangleAlert, Users } from 'lucide-vue-next'
+import { Activity, BrainCircuit, ShieldAlert, Sparkles, Target, TrendingUp, TriangleAlert, Users } from 'lucide-vue-next'
 import { getClassAnalysis, getClassDetail, type TeacherClassAnalysis } from '@/api/teacher'
 
 const route = useRoute()
@@ -141,10 +141,6 @@ const fetchData = async () => {
 
 onMounted(fetchData)
 
-const goBack = () => {
-  router.push(`/app/teacher/classes/${classId}`)
-}
-
 const goExamDetail = (examId: number) => {
   router.push(`/app/teacher/exams/${examId}`)
 }
@@ -157,9 +153,6 @@ const goStudentProfile = (studentId: number) => {
 <template>
   <div class="view-class-analysis">
     <header class="analysis-header">
-      <button class="icon-button" @click="goBack" aria-label="返回">
-        <ArrowLeft :size="22" />
-      </button>
       <div class="header-copy">
         <p class="eyebrow">AI 班级学习分析</p>
         <h1>{{ classDetail?.name || '班级学习分析' }}</h1>

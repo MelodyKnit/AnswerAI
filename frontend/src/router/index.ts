@@ -35,6 +35,7 @@ import TeacherFeedbackManageView from '../views/teacher/TeacherFeedbackManageVie
 import TeacherClassAnalysisView from '../views/teacher/TeacherClassAnalysisView.vue'
 import TeacherClassCreateView from '../views/teacher/TeacherClassCreateView.vue'
 import TeacherClassDetailView from '../views/teacher/TeacherClassDetailView.vue'
+import TeacherClassEditView from '../views/teacher/TeacherClassEditView.vue'
 import TeacherClassesView from '../views/teacher/TeacherClassesView.vue'
 import TeacherExamDetailView from '../views/teacher/TeacherExamDetailView.vue'
 import TeacherStudentProfileView from '../views/teacher/TeacherStudentProfileView.vue'
@@ -166,6 +167,12 @@ const router = createRouter({
           name: 'teacher-class-analysis',
           component: TeacherClassAnalysisView,
           meta: { title: '班级学习分析', section: 'teacher', hideNav: true }
+        },
+        {
+          path: 'teacher/classes/:id/edit',
+          name: 'teacher-class-edit',
+          component: TeacherClassEditView,
+          meta: { title: '修改班级', section: 'teacher', hideNav: true }
         },
         {
           path: 'teacher/classes/:id',

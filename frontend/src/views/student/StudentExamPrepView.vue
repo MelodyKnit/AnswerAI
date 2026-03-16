@@ -13,6 +13,7 @@ const loading = ref(true)
 const starting = ref(false)
 const errorMsg = ref('')
 const canStart = ref(false)
+const alreadySubmitted = ref(false)
 
 const parseServerTime = (value: string) => {
   if (!value) return Number.NaN
@@ -37,6 +38,7 @@ onMounted(async () => {
     const res = await http.get('/student/exams/detail', { params: { exam_id: examId } })
     exam.value = (res as any)?.exam || res
     canStart.value = Boolean((res as any)?.can_start)
+    alreadySubmitted.value = Boolean((res as any)?.already_submitted) && !Boolean((res as any)?.allow_retake_start)
   } catch (error: any) {
     errorMsg.value = error.response?.data?.message || '无法获取考试信息'
   } finally {
@@ -45,6 +47,10 @@ onMounted(async () => {
 })
 
 const startExam = async () => {
+  if (alreadySubmitted.value) {
+    router.push(`/app/student/results/${examId}`)
+    return
+  }
   if (!canStart.value) {
     errorMsg.value = '当前不在考试开放时间内，暂不能开始。'
     return
@@ -53,7 +59,16 @@ const startExam = async () => {
   errorMsg.value = ''
   try {
     const res = await http.post('/student/exams/start', { exam_id: examId })
-    const sessionId = (res as any)?.submission?.id
+    const submission = (res as any)?.submission
+    const status = String(submission?.status || '').toLowerCase()
+    if (['submitted', 'completed', 'reviewed'].includes(status) || submission?.submitted_at) {
+      router.push(`/app/student/results/${examId}`)
+      return
+    }
+    const sessionId = Number(submission?.id)
+    if (!Number.isFinite(sessionId) || sessionId <= 0) {
+      throw new Error('无效的考试会话ID')
+    }
     router.push(`/app/student/exams/${examId}/session/${sessionId}`)
   } catch (error: any) {
     errorMsg.value = error.response?.data?.message || '无法开始考试，请稍后重试'
@@ -124,13 +139,14 @@ const startExam = async () => {
       </div>
 
       <div class="bottom-action">
-        <p v-if="!canStart" class="start-hint">当前不在考试开放时间，暂不可开始。</p>
+        <p v-if="alreadySubmitted" class="start-hint">该考试已提交，点击下方按钮查看成绩。</p>
+        <p v-else-if="!canStart" class="start-hint">当前不在考试开放时间，暂不可开始。</p>
         <button 
           class="button button-large" 
           @click="startExam" 
-          :disabled="starting || !canStart"
+          :disabled="starting || (!canStart && !alreadySubmitted)"
         >
-          {{ starting ? '准备中...' : '开始考试' }}
+          {{ starting ? '准备中...' : alreadySubmitted ? '查看成绩' : '开始考试' }}
         </button>
       </div>
     </div>

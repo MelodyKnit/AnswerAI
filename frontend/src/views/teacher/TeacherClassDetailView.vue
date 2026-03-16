@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, UserPlus, Download, X, Loader2, Trash2, BrainCircuit, Search } from 'lucide-vue-next'
+import { Settings, UserPlus, Download, X, Loader2, Trash2, BrainCircuit, Search } from 'lucide-vue-next'
 import { getClassDetail, getClassStudents, inviteStudentToClass, removeStudentFromClass, getTeacherDashboardOverview } from '@/api/teacher'
 
 const route = useRoute()
@@ -105,16 +105,16 @@ onMounted(() => {
   fetchData()
 })
 
-const goBack = () => {
-  router.back()
-}
-
 const goStudentProfile = (studentId: number) => {
   router.push(`/app/teacher/students/${studentId}`)
 }
 
 const goClassAnalysis = () => {
   router.push(`/app/teacher/classes/${classId}/analysis`)
+}
+
+const goClassEdit = () => {
+  router.push(`/app/teacher/classes/${classId}/edit`)
 }
 
 const exportStudentsAsCsv = () => {
@@ -226,9 +226,6 @@ const removeStudent = async (student: any) => {
 <template>
   <div class="view-class-detail">
     <header class="detail-header">
-      <button class="icon-button" @click="goBack" aria-label="返回">
-        <ArrowLeft :size="24" />
-      </button>
       <div v-if="classDetail" class="header-content">
         <h1 class="page-title">{{ classDetail.name }}</h1>
         <div class="tags">
@@ -236,9 +233,11 @@ const removeStudent = async (student: any) => {
           <span class="tag">{{ classDetail.subject }}</span>
         </div>
       </div>
-      <button v-if="classDetail" class="analysis-header-button" @click="goClassAnalysis">
-        学习分析
-      </button>
+      <div v-if="classDetail" class="header-corner-actions">
+        <button class="settings-button" @click="goClassEdit" aria-label="修改班级" title="修改班级">
+          <Settings :size="18" />
+        </button>
+      </div>
     </header>
 
     <div v-if="isLoading" class="loading-state">加载中...</div>
@@ -372,19 +371,33 @@ const removeStudent = async (student: any) => {
 .detail-header {
   display: flex;
   align-items: flex-start;
+  justify-content: space-between;
   gap: 10px;
   margin-bottom: 2px;
 }
 
-.analysis-header-button {
-  margin-left: auto;
-  border: 1px solid rgba(60, 106, 88, 0.22);
-  background: linear-gradient(135deg, #f8fcf9 0%, #edf6f1 100%);
-  color: #33584a;
-  border-radius: 999px;
-  padding: 9px 14px;
-  font-size: 13px;
-  font-weight: 600;
+.header-corner-actions {
+  flex-shrink: 0;
+}
+
+.settings-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid #d8e0ef;
+  background: #fff;
+  color: #3a4a65;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s, color 0.2s;
+}
+
+.settings-button:hover {
+  border-color: #c4d3ef;
+  color: #2a3f67;
+  box-shadow: 0 4px 12px rgba(42, 63, 103, 0.12);
 }
 
 .icon-button {
@@ -413,20 +426,29 @@ const removeStudent = async (student: any) => {
 .header-content {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 
 .page-title {
-  font-size: 32px;
+  font-size: 24px;
   font-weight: 600;
   color: var(--ink);
   letter-spacing: -0.02em;
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
 }
 
 .tags {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .tag {
@@ -435,6 +457,10 @@ const removeStudent = async (student: any) => {
   background: var(--line);
   color: var(--ink);
   border-radius: 6px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .loading-state,
@@ -731,8 +757,17 @@ const removeStudent = async (student: any) => {
 }
 
 @media (max-width: 768px) {
+  .detail-header {
+    gap: 8px;
+  }
+
+  .settings-button {
+    width: 32px;
+    height: 32px;
+  }
+
   .page-title {
-    font-size: 28px;
+    font-size: 22px;
   }
 
   .stat-value {

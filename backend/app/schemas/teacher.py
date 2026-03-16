@@ -1,12 +1,19 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ClassCreateRequest(BaseModel):
-    name: str
-    grade_name: str
-    subject: str
+    name: str = Field(min_length=1, max_length=60)
+    grade_name: str = Field(min_length=1, max_length=30)
+    subject: str = Field(min_length=1, max_length=30)
+
+
+class ClassUpdateRequest(BaseModel):
+    class_id: int
+    name: str = Field(min_length=1, max_length=60)
+    grade_name: str = Field(min_length=1, max_length=30)
+    subject: str = Field(min_length=1, max_length=30)
 
 
 class ClassInviteRequest(BaseModel):

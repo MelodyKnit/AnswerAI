@@ -475,7 +475,7 @@ onUnmounted(() => {
 
     <section class="section-block">
       <div class="section-title-row">
-        <h2>薄弱点优先级</h2>
+        <h2>薄弱知识点（AI分类）</h2>
         <span class="section-sub">AI 建议先攻克前 3 项</span>
       </div>
       <div v-if="weakNodes.length" class="weak-list">

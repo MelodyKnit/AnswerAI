@@ -230,6 +230,10 @@ export const createClass = (data: { name: string, grade_name: string, subject: s
   return http.post('/teacher/classes/create', data)
 }
 
+export const updateClass = (data: { class_id: number, name: string, grade_name: string, subject: string }) => {
+  return http.post('/teacher/classes/update', data)
+}
+
 export const getClassDetail = (class_id: number) => {
   return http.get('/teacher/classes/detail', { params: { class_id } })
 }

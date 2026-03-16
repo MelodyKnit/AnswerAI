@@ -12,19 +12,34 @@ const form = ref({
   subject: ''
 })
 
+const CLASS_NAME_MAX = 60
+const GRADE_NAME_MAX = 30
+const SUBJECT_MAX = 30
+
 const isSubmitting = ref(false)
 
 
 
 const handleCreate = async () => {
-  if (!form.value.name || !form.value.grade_name || !form.value.subject) {
+  const payload = {
+    name: form.value.name.trim(),
+    grade_name: form.value.grade_name.trim(),
+    subject: form.value.subject.trim(),
+  }
+
+  if (!payload.name || !payload.grade_name || !payload.subject) {
     alert('请填写完整信息')
+    return
+  }
+
+  if (payload.name.length > CLASS_NAME_MAX || payload.grade_name.length > GRADE_NAME_MAX || payload.subject.length > SUBJECT_MAX) {
+    alert('输入内容超出长度限制，请精简后再提交')
     return
   }
   
   try {
     isSubmitting.value = true
-    await createClass(form.value)
+    await createClass(payload)
     
     // assuming it returns the new class in res.class or similar
     // we just go back to classes list
@@ -45,17 +60,17 @@ const handleCreate = async () => {
     <div class="form-container">
       <div class="form-group">
         <label>班级名称</label>
-        <input v-model="form.name" type="text" placeholder="例如：三年二班" class="form-input" />
+        <input v-model="form.name" type="text" maxlength="60" placeholder="例如：三年二班" class="form-input" />
       </div>
 
       <div class="form-group">
         <label>所属年级</label>
-        <input v-model="form.grade_name" type="text" placeholder="如：八年级" class="form-input" />
+        <input v-model="form.grade_name" type="text" maxlength="30" placeholder="如：八年级" class="form-input" />
       </div>
 
       <div class="form-group">
         <label>任教学科</label>
-        <input v-model="form.subject" type="text" placeholder="如：物理" class="form-input" />
+        <input v-model="form.subject" type="text" maxlength="30" placeholder="如：物理" class="form-input" />
       </div>
     </div>
 

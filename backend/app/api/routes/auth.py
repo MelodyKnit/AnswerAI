@@ -118,6 +118,12 @@ def update_profile(payload: ProfileUpdateRequest, current_user: User = Depends(g
     """
     update_data = payload.model_dump(exclude_none=True)
 
+    # 用户名一旦设置后不可修改。
+    next_username = update_data.get("username")
+    if next_username is not None and next_username != current_user.username:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username cannot be modified once set")
+    update_data.pop("username", None)
+
     # 学生只允许更新与个人身份直接相关的信息，禁止修改学校/年级。
     if current_user.role == "student":
         allowed_fields = {"name", "email", "phone", "avatar_url"}

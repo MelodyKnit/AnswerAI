@@ -149,12 +149,19 @@ const goDetail = (id: number) => {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
 }
 
 .class-name {
   font-size: 18px;
   font-weight: 600;
   color: var(--ink);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .invite-code {
@@ -164,6 +171,10 @@ const goDetail = (id: number) => {
   border-radius: 4px;
   border: 1px solid var(--line);
   color: var(--ink-soft);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-body {
@@ -177,6 +188,13 @@ const goDetail = (id: number) => {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+
+.info-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .icon {

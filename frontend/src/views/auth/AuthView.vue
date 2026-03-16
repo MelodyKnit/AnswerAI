@@ -123,24 +123,14 @@ const handleSubmit = async () => {
             />
           </div>
 
-          <div class="form-group">
-            <label for="login-id">邮箱或用户名</label>
+          <div class="form-group" v-if="activeMode === 'login'">
+            <label for="login-id">登录账号</label>
             <input
               id="login-id"
               type="text"
-              placeholder="请输入邮箱或用户名"
+              placeholder="请输入登录账号"
               v-model="form.loginId"
               required
-              v-if="activeMode === 'login'"
-            />
-            <label for="email" v-else>邮箱地址</label>
-            <input 
-              id="email"
-              type="email" 
-              placeholder="name@example.com" 
-              v-model="form.email" 
-              required 
-              v-if="activeMode === 'register'"
             />
           </div>
 
@@ -153,6 +143,17 @@ const handleSubmit = async () => {
               v-model="form.username"
               required
               pattern="^(?=.*[A-Za-z])[A-Za-z0-9]+$"
+            />
+          </div>
+
+          <div class="form-group" v-if="activeMode === 'register'">
+            <label for="email">邮箱地址</label>
+            <input 
+              id="email"
+              type="email" 
+              placeholder="name@example.com" 
+              v-model="form.email" 
+              required 
             />
           </div>
 

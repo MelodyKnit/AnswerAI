@@ -26,7 +26,7 @@ onMounted(async () => {
   <div class="view-dashboard" v-if="!loading">
     <!-- Greeting -->
     <header class="dashboard-header animate-fade-in">
-      <h1 class="greeting">早上好，{{ authStore.user?.username || '同学' }}</h1>
+      <h1 class="greeting">早上好，{{ authStore.user?.name || authStore.user?.username || '' }}同学</h1>
       <p class="greeting-sub">今天是你坚持学习的第 24 天。稳步前进。</p>        
     </header>
 

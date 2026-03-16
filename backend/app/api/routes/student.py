@@ -6,13 +6,13 @@ from time import perf_counter
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role
 from app.core.config import settings
 from app.core.response import success_response
-from app.models.academic import ClassRoom, ClassStudent, Subject
+from app.models.academic import ClassRoom, ClassStudent, KnowledgePoint, Subject
 from app.models.exam import Exam, ExamClass, ExamQuestion, ExamSubmission, SubmissionAnswer, SubmissionBehaviorEvent
 from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
 from app.models.user import AITask, ReviewItem, StudyPlan, StudyTask, User
@@ -28,6 +28,16 @@ from app.services.tasks import complete_ai_task, mark_ai_task_running, queue_ai_
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+AI_KNOWLEDGE_CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("点线面的投影", ["点投影", "线投影", "面投影", "投影", "点线面", "三视图"]),
+    ("截交线的画法", ["截交线", "截切", "截平面", "截断", "切割线"]),
+    ("相贯线的画法", ["相贯线", "相交", "贯通", "相贯"]),
+    ("组合体的画法", ["组合体", "叠加体", "组合", "构型"]),
+    ("剖视图的画法", ["剖视", "剖面", "全剖", "半剖", "局部剖"]),
+    ("标准件画法", ["标准件", "螺纹", "螺栓", "螺母", "垫圈", "销", "键"]),
+    ("零件图的画法", ["零件图", "尺寸标注", "公差", "表面粗糙度", "技术要求"]),
+]
 
 
 def _study_task_type_label(task_type: str | None) -> str:
@@ -115,7 +125,46 @@ def get_student_exam_detail(exam_id: int, current_user: User = Depends(require_r
     start_time = _as_utc(exam.start_time)
     end_time = _as_utc(exam.end_time)
     can_start = start_time <= now <= end_time and exam.status in {"published", "ongoing"}
-    return success_response({"exam": _serialize_exam_detail(db, exam), "can_start": can_start, "rules": {"allow_review": exam.allow_review, "random_question_order": exam.random_question_order}})
+
+    submission = db.scalar(
+        select(ExamSubmission).where(
+            ExamSubmission.exam_id == exam.id,
+            ExamSubmission.student_id == current_user.id,
+        )
+    )
+    completed_statuses = {"submitted", "completed", "reviewed"}
+    has_submitted = bool(
+        submission
+        and (
+            str(submission.status or "").lower() in completed_statuses
+            or submission.submitted_at is not None
+        )
+    )
+
+    approved_retake_request = db.scalar(
+        select(AITask)
+        .where(
+            AITask.type == "retake_request",
+            AITask.resource_type == "exam",
+            AITask.resource_id == exam.id,
+            AITask.created_by == current_user.id,
+            AITask.status == "approved",
+        )
+        .order_by(AITask.created_at.desc())
+    )
+    allow_retake_start = approved_retake_request is not None
+    if has_submitted and not allow_retake_start:
+        can_start = False
+
+    return success_response(
+        {
+            "exam": _serialize_exam_detail(db, exam),
+            "can_start": can_start,
+            "already_submitted": has_submitted,
+            "allow_retake_start": allow_retake_start,
+            "rules": {"allow_review": exam.allow_review, "random_question_order": exam.random_question_order},
+        }
+    )
 
 
 @router.post("/student/exams/start")
@@ -155,6 +204,7 @@ def start_exam(payload: StartExamRequest, current_user: User = Depends(require_r
     if not relation:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Student is not bound to any class")
     submission = db.scalar(select(ExamSubmission).where(ExamSubmission.exam_id == exam.id, ExamSubmission.student_id == current_user.id))
+    completed_statuses = {"submitted", "completed", "reviewed"}
     if not submission:
         submission = ExamSubmission(
             exam_id=exam.id,
@@ -168,6 +218,31 @@ def start_exam(payload: StartExamRequest, current_user: User = Depends(require_r
             ai_analysis_status="pending",
         )
         db.add(submission)
+    elif not allow_retake_start:
+        # 防止误触“开始考试”把已提交记录回退为进行中，造成统计与状态错乱。
+        has_submission_evidence = bool(
+            submission.submitted_at is not None
+            or float(submission.total_score or 0) > 0
+            or float(submission.correct_rate or 0) > 0
+        )
+        if submission.status in completed_statuses or has_submission_evidence:
+            patched = False
+            if submission.teacher_id != exam.created_by:
+                submission.teacher_id = exam.created_by
+                patched = True
+            if relation and submission.class_id != relation.class_id:
+                submission.class_id = relation.class_id
+                patched = True
+            if patched:
+                db.add(submission)
+                db.commit()
+                db.refresh(submission)
+            if submission.status not in completed_statuses:
+                submission.status = "submitted"
+                db.add(submission)
+                db.commit()
+                db.refresh(submission)
+            return success_response({"submission": _serialize_submission(submission), "paper_token": f"paper_{submission.id}"})
 
     if allow_retake_start:
         submission.status = "in_progress"
@@ -189,7 +264,15 @@ def start_exam(payload: StartExamRequest, current_user: User = Depends(require_r
             "submission_id": submission.id,
         }
         db.add(approved_retake_request)
-    elif submission.status != "in_progress":
+    elif submission.status == "in_progress":
+        # 若历史 deadline 异常（为空或已过期），进入考试时自动修正，避免前端一进入就触发自动交卷。
+        effective_deadline = _as_utc(submission.deadline_at) if submission.deadline_at else None
+        exam_end = _as_utc(exam.end_time)
+        if effective_deadline is None or effective_deadline <= now:
+            duration_deadline = now + timedelta(minutes=max(1, int(exam.duration_minutes or 60)))
+            submission.deadline_at = min(duration_deadline, exam_end)
+            submission.started_at = submission.started_at or now
+    elif submission.status not in {"in_progress", *completed_statuses}:
         submission.status = "in_progress"
         submission.started_at = submission.started_at or now
         submission.deadline_at = _as_utc(exam.end_time)
@@ -211,9 +294,22 @@ def get_exam_paper(exam_id: int, submission_id: int, current_user: User = Depend
     获取 exam paper 相关数据。
     """
     exam = _get_student_exam(db, current_user.id, exam_id)
-    submission = _get_student_submission(db, current_user.id, submission_id)
-    if submission.exam_id != exam.id:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+    submission = _resolve_student_submission_for_exam(db, current_user.id, exam.id, submission_id)
+    completed_statuses = {"submitted", "completed", "reviewed"}
+    if str(submission.status or "").lower() in completed_statuses or submission.submitted_at is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exam already submitted")
+
+    now = datetime.now(UTC)
+    exam_end = _as_utc(exam.end_time)
+    effective_deadline = _as_utc(submission.deadline_at) if submission.deadline_at else None
+    if effective_deadline is None or effective_deadline <= now:
+        duration_deadline = now + timedelta(minutes=max(1, int(exam.duration_minutes or 60)))
+        submission.deadline_at = min(duration_deadline, exam_end)
+        submission.started_at = submission.started_at or now
+        db.add(submission)
+        db.commit()
+        db.refresh(submission)
+
     question_items = db.scalars(select(ExamQuestion).where(ExamQuestion.exam_id == exam.id).order_by(ExamQuestion.order_no.asc())).all()
     questions = []
     for item in question_items:
@@ -297,7 +393,8 @@ def save_answer(payload: SaveAnswerRequest, current_user: User = Depends(require
     """
     处理 save answer 请求并返回结果。
     """
-    submission = _get_student_submission(db, current_user.id, payload.submission_id)
+    _get_student_exam(db, current_user.id, payload.exam_id)
+    submission = _resolve_student_submission_for_exam(db, current_user.id, payload.exam_id, payload.submission_id)
     answer = db.scalar(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id, SubmissionAnswer.question_id == payload.question_id))
     if not answer:
         answer = SubmissionAnswer(submission_id=submission.id, exam_id=payload.exam_id, question_id=payload.question_id)
@@ -323,7 +420,8 @@ def save_answers_batch(payload: BatchSaveAnswerRequest, current_user: User = Dep
     """
     处理 save answers batch 请求并返回结果。
     """
-    submission = _get_student_submission(db, current_user.id, payload.submission_id)
+    _get_student_exam(db, current_user.id, payload.exam_id)
+    submission = _resolve_student_submission_for_exam(db, current_user.id, payload.exam_id, payload.submission_id)
     saved_count = 0
     for item in payload.answers:
         answer = db.scalar(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id, SubmissionAnswer.question_id == item.question_id))
@@ -344,7 +442,8 @@ def report_behavior(payload: BehaviorReportRequest, current_user: User = Depends
     """
     处理 report behavior 请求并返回结果。
     """
-    submission = _get_student_submission(db, current_user.id, payload.submission_id)
+    _get_student_exam(db, current_user.id, payload.exam_id)
+    submission = _resolve_student_submission_for_exam(db, current_user.id, payload.exam_id, payload.submission_id)
     for event in payload.events:
         db.add(SubmissionBehaviorEvent(submission_id=submission.id, exam_id=payload.exam_id, question_id=event.question_id, event_type=event.event_type, payload=event.payload, occurred_at=event.occurred_at))
     db.commit()
@@ -361,8 +460,8 @@ def pre_submit_check(exam_id: int, submission_id: int, current_user: User = Depe
     """
     处理 pre submit check 请求并返回结果。
     """
-    _get_student_exam(db, current_user.id, exam_id)
-    submission = _get_student_submission(db, current_user.id, submission_id)
+    exam = _get_student_exam(db, current_user.id, exam_id)
+    submission = _resolve_student_submission_for_exam(db, current_user.id, exam.id, submission_id)
     question_ids = db.scalars(select(ExamQuestion.question_id).where(ExamQuestion.exam_id == exam_id)).all()
     answers = db.scalars(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id)).all()
     answer_map = {item.question_id: item for item in answers}
@@ -384,7 +483,19 @@ def submit_exam(payload: SubmitExamRequest, current_user: User = Depends(require
     if not payload.confirm_submit:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="confirm_submit must be true")
     exam = _get_student_exam(db, current_user.id, payload.exam_id)
-    submission = _get_student_submission(db, current_user.id, payload.submission_id)
+    submission = _resolve_student_submission_for_exam(db, current_user.id, exam.id, payload.submission_id)
+    relation = db.scalar(
+        select(ClassStudent)
+        .join(ExamClass, ExamClass.class_id == ClassStudent.class_id)
+        .where(ClassStudent.student_id == current_user.id, ClassStudent.status == "active", ExamClass.exam_id == exam.id)
+        .limit(1)
+    )
+    if submission.teacher_id != exam.created_by:
+        submission.teacher_id = exam.created_by
+    if relation and submission.class_id != relation.class_id:
+        submission.class_id = relation.class_id
+    if submission.started_at is None:
+        submission.started_at = datetime.now(UTC)
     answers = db.scalars(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id)).all()
     question_items = db.scalars(select(ExamQuestion).where(ExamQuestion.exam_id == exam.id)).all()
     question_score_map = {item.question_id: float(item.score) for item in question_items}
@@ -450,6 +561,10 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
     started_at = perf_counter()
     now = datetime.now(UTC)
     completed_statuses = {"submitted", "completed", "reviewed"}
+    completed_submission_clause = or_(
+        ExamSubmission.status.in_(completed_statuses),
+        ExamSubmission.submitted_at.is_not(None),
+    )
     _maybe_cleanup_invalid_study_artifacts_for_student(db, current_user.id, now)
     upcoming_count = db.scalar(
         select(func.count()).select_from(Exam)
@@ -467,7 +582,7 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
             ClassStudent.status == "active",
             Exam.status.in_(["published", "ongoing"]),
             Exam.end_time >= now,
-            (ExamSubmission.id == None) | (ExamSubmission.status.notin_(completed_statuses)),
+            (ExamSubmission.id == None) | (~completed_submission_clause),
         )
     ) or 0
     recent_exams = db.scalars(
@@ -486,7 +601,7 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
             ClassStudent.status == "active",
             Exam.status.in_(["published", "ongoing"]),
             Exam.end_time >= now,
-            (ExamSubmission.id == None) | (ExamSubmission.status.notin_(completed_statuses)),
+            (ExamSubmission.id == None) | (~completed_submission_clause),
         ).order_by(Exam.start_time.asc()).limit(5)
     ).all()
     latest_submission = db.scalar(select(ExamSubmission).where(ExamSubmission.student_id == current_user.id).order_by(ExamSubmission.created_at.desc()))
@@ -666,6 +781,13 @@ def get_question_analysis(
         .order_by(QuestionOption.sort_order.asc())
     ).all()
 
+    related_knowledge_points = db.scalars(
+        select(KnowledgePoint.name)
+        .join(QuestionKnowledgePoint, QuestionKnowledgePoint.knowledge_point_id == KnowledgePoint.id)
+        .where(QuestionKnowledgePoint.question_id == question_id)
+    ).all()
+    knowledge_point_names = [str(item) for item in related_knowledge_points if str(item).strip()]
+
     standard_answer = parse_answer(question.answer_text)
     student_answer = parse_answer(answer.answer_content) if answer and answer.answer_content else (answer.answer_text if answer else None)
     full_score = float(exam_item.score) if exam_item else float(question.score or 0)
@@ -677,19 +799,25 @@ def get_question_analysis(
 
     stem_text = str(question.stem or "").replace("\n", " ").strip()
     stem_excerpt = stem_text[:36] + ("..." if len(stem_text) > 36 else "")
+    analysis_text = str(question.analysis or "").strip()
+    analysis_focus = analysis_text[:80] + ("..." if len(analysis_text) > 80 else "") if analysis_text else "先识别题目中的已知条件与目标，再按规范步骤作答。"
+    knowledge_text = "、".join(knowledge_point_names[:3]) if knowledge_point_names else "本题核心知识点"
+
+    question_focus_reason = f"本题重点考查：{knowledge_text}。题目关键在于“{stem_excerpt}”。"
+    explanation_tail = f"解题要点：{analysis_focus}"
 
     if student_answer is None or (isinstance(student_answer, str) and not student_answer.strip()):
         diagnosis_type = "未作答"
-        diagnosis_reason = f"该题（{stem_excerpt}）没有提交有效答案，建议先完成一次独立作答再对照解析。"
+        diagnosis_reason = f"{question_focus_reason}你还未提交有效答案。{explanation_tail}"
     elif is_correct is False:
         diagnosis_type = "答题错误"
-        diagnosis_reason = f"你的答案与标准答案不一致（你的答案：{student_answer}；标准答案：{standard_answer}），建议先定位审题还是概念问题。"
+        diagnosis_reason = f"{question_focus_reason}本次作答与标准答案不一致。建议先回到题干定位关键信息，再按解析步骤逐步推导。{explanation_tail}"
     elif is_correct is True:
         diagnosis_type = "已掌握"
-        diagnosis_reason = f"该题作答正确（{stem_excerpt}），建议做1-2道同类变式题巩固。"
+        diagnosis_reason = f"{question_focus_reason}你本题作答正确，建议再做1-2道同类变式题巩固。{explanation_tail}"
     else:
         diagnosis_type = "待复核"
-        diagnosis_reason = "该题属于主观题，建议结合解析与教师批注进行结构化复盘。"
+        diagnosis_reason = f"{question_focus_reason}该题属于主观题，建议结合解析与教师批注进行结构化复盘。{explanation_tail}"
 
     if question.type in {"single_choice", "multiple_choice"}:
         fix_steps = [
@@ -723,6 +851,7 @@ def get_question_analysis(
                 "question_type": question.type,
                 "stem": question.stem,
                 "analysis": question.analysis,
+                "knowledge_points": knowledge_point_names,
                 "options": [{"key": item.option_key, "content": item.content} for item in options],
             },
             "answer": {
@@ -852,6 +981,29 @@ def _get_student_submission(db: Session, student_id: int, submission_id: int) ->
     return submission
 
 
+def _resolve_student_submission_for_exam(db: Session, student_id: int, exam_id: int, submission_id: int) -> ExamSubmission:
+    """
+    保证 submission_id 与 exam_id 一致。
+    若前端携带了历史 submission_id，自动回退到该学生在当前考试下的真实 submission。
+    """
+    submission = _get_student_submission(db, student_id, submission_id)
+    if submission.exam_id == exam_id:
+        return submission
+
+    fallback = db.scalar(
+        select(ExamSubmission)
+        .where(
+            ExamSubmission.exam_id == exam_id,
+            ExamSubmission.student_id == student_id,
+        )
+        .order_by(ExamSubmission.created_at.desc(), ExamSubmission.id.desc())
+    )
+    if fallback:
+        return fallback
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Submission does not belong to this exam")
+
+
 def _as_utc(dt: datetime) -> datetime:
     """
     将数据库中可能出现的 naive/aware datetime 统一为 UTC aware。
@@ -880,7 +1032,7 @@ def _serialize_exam_list_item(db: Session, exam: Exam, student_id: int) -> dict:
             ExamSubmission.student_id == student_id,
             ExamSubmission.created_at >= exam.created_at,
         )
-        .order_by(ExamSubmission.created_at.desc())
+        .order_by(ExamSubmission.created_at.desc(), ExamSubmission.id.desc())
     )
     latest_retake_request = db.scalar(
         select(AITask)
@@ -915,7 +1067,10 @@ def _serialize_exam_list_item(db: Session, exam: Exam, student_id: int) -> dict:
 
     has_real_submission = bool(
         submission
-        and str(submission.status or "").lower() in submitted_statuses
+        and (
+            str(submission.status or "").lower() in submitted_statuses
+            or submission.submitted_at is not None
+        )
         and submission.submitted_at is not None
         and has_submission_evidence
     )
@@ -968,29 +1123,60 @@ def get_student_knowledge_map(subject: str | None = None, current_user: User = D
     """
     获取学生真实知识点图谱(基于错题统计)
     """
-    answers = db.scalars(
-        select(SubmissionAnswer)
-        .join(ExamSubmission)
-        .where(ExamSubmission.student_id == current_user.id)
+    answer_rows = db.execute(
+        select(SubmissionAnswer.question_id, SubmissionAnswer.is_correct, Question.stem, Question.analysis)
+        .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+        .join(Question, Question.id == SubmissionAnswer.question_id)
+        .where(
+            ExamSubmission.student_id == current_user.id,
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
     ).all()
-    
-    stats = {}
-    for ans in answers:
-        q = db.get(Question, ans.question_id)
-        if not q or not q.type:
-            continue
-        node_name = q.type
-        if node_name not in stats:
-            stats[node_name] = {"total": 0, "correct": 0}
-        stats[node_name]["total"] += 1
-        if ans.is_correct:
-            stats[node_name]["correct"] += 1
-            
+
+    question_ids = list({int(row.question_id) for row in answer_rows if row.question_id is not None})
+    kp_rows = []
+    if question_ids:
+        kp_rows = db.execute(
+            select(QuestionKnowledgePoint.question_id, KnowledgePoint.name)
+            .join(KnowledgePoint, KnowledgePoint.id == QuestionKnowledgePoint.knowledge_point_id)
+            .where(QuestionKnowledgePoint.question_id.in_(question_ids))
+        ).all()
+
+    kp_map: dict[int, list[str]] = {}
+    for question_id, kp_name in kp_rows:
+        qid = int(question_id)
+        kp_map.setdefault(qid, []).append(str(kp_name))
+
+    def classify_categories(stem_text: str, analysis_text: str, kp_names: list[str]) -> list[str]:
+        corpus = f"{stem_text} {analysis_text} {' '.join(kp_names)}".lower()
+        matched: list[str] = []
+        for category, keywords in AI_KNOWLEDGE_CATEGORY_KEYWORDS:
+            if any(str(keyword).lower() in corpus for keyword in keywords):
+                matched.append(category)
+        if matched:
+            return matched
+        return ["零件图的画法"]
+
+    stats: dict[str, dict[str, int]] = {}
+    for row in answer_rows:
+        qid = int(row.question_id)
+        categories = classify_categories(
+            str(row.stem or ""),
+            str(row.analysis or ""),
+            kp_map.get(qid, []),
+        )
+        for node_name in categories:
+            if node_name not in stats:
+                stats[node_name] = {"total": 0, "correct": 0}
+            stats[node_name]["total"] += 1
+            if row.is_correct is True:
+                stats[node_name]["correct"] += 1
+
     nodes = []
     for i, (name, s) in enumerate(stats.items()):
         mastery = s["correct"] / s["total"] if s["total"] > 0 else 0
         status = "good" if mastery > 0.8 else ("average" if mastery > 0.6 else "weak")
-        nodes.append({"id": f"k{i}", "name": f"{name}题型", "mastery": round(mastery, 2), "status": status})
+        nodes.append({"id": f"k{i}", "name": name, "mastery": round(mastery, 2), "status": status})
         
     summary = "当前尚未积累足够的答题数据"
     if nodes:

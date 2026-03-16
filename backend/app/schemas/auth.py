@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class RegisterRequest(BaseModel):
@@ -32,12 +32,21 @@ class LoginRequest(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = None
+    username: str | None = None
     email: EmailStr | None = None
     phone: str | None = None
     avatar_url: str | None = None
     school_name: str | None = None
     grade_name: str | None = None
+
+    @model_validator(mode="after")
+    def validate_username_immutable(self):
+        if self.username is not None:
+            raise ValueError("Username cannot be modified once set")
+        return self
 
 
 class ChangePasswordRequest(BaseModel):

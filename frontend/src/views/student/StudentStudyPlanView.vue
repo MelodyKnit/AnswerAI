@@ -130,7 +130,7 @@ onMounted(async () => {
 
     <section v-if="aiOverview" class="ai-panel">
       <article class="ai-score-card">
-        <p class="ai-kicker">AI 学习准备度</p>
+        <p class="ai-kicker">您当前的学习状态（AI评估）</p>
         <div class="ai-score-row">
           <p class="ai-score">{{ aiOverview.readiness_score }}</p>
           <p class="ai-score-unit">/100</p>

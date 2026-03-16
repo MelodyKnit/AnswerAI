@@ -20,10 +20,12 @@ const lightboxSrc = ref('')
 const lightboxAlt = ref('题目插图')
 const isAnswerSheetOpen = ref(false)
 const questionEnterAt = ref(Date.now())
+const paperLoaded = ref(false)
 let countdownTimer: number | null = null
 
 const currentQuestion = computed(() => questions.value[currentIndex.value] || null)
 const QUESTION_TYPE_ORDER = ['single_choice', 'multiple_choice', 'fill_in_the_blank', 'short_answer']
+const TEXT_QUESTION_TYPES = new Set(['fill_in_the_blank', 'fill_blank', 'blank', 'short_answer', 'essay', 'material'])
 
 const getQuestionTypeLabel = (type: string) => {
   if (type === 'single_choice') return '单选题'
@@ -156,12 +158,15 @@ const renderQuestionContent = (value: unknown) => {
 const answers = ref<Record<number, any>>({})
 
 onMounted(async () => {
+  let loadedOk = false
   try {
     const res = await http.get('/student/exams/paper', {
       params: { exam_id: examId, submission_id: submissionId }
     })
     questions.value = ((res as any)?.questions || []) || []
     remainingSeconds.value = Number((res as any)?.remaining_seconds || 0)
+    paperLoaded.value = true
+    loadedOk = true
     
     // Initialize empty answers
     questions.value.forEach(q => {
@@ -169,14 +174,16 @@ onMounted(async () => {
     })
   } catch (error) {
     console.error('Failed to load exam paper:', error)
-    alert('无法加载试卷数据')
+    alert('无法加载试卷数据，可能该考试已提交或已结束。')
+    router.replace(`/app/student/results/${examId}`)
   } finally {
     loading.value = false
   }
 
   questionEnterAt.value = Date.now()
-
-  startCountdown()
+  if (loadedOk && remainingSeconds.value > 0) {
+    startCountdown()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -187,6 +194,7 @@ onBeforeUnmount(() => {
 })
 
 const startCountdown = () => {
+  if (!paperLoaded.value) return
   if (countdownTimer !== null) {
     window.clearInterval(countdownTimer)
   }
@@ -194,7 +202,7 @@ const startCountdown = () => {
     if (remainingSeconds.value <= 0) {
       window.clearInterval(countdownTimer as number)
       countdownTimer = null
-      if (!submitting.value) {
+      if (!submitting.value && paperLoaded.value) {
         submitExam(true)
       }
       return
@@ -216,7 +224,7 @@ const saveCurrentAnswer = async () => {
       submission_id: submissionId,
       question_id: qId,
       answer: currentQuestion.value.type === 'multiple_choice' ? val : (currentQuestion.value.type === 'single_choice' ? val : null),
-      answer_text: (currentQuestion.value.type === 'fill_in_the_blank' || currentQuestion.value.type === 'short_answer') ? val : null,
+      answer_text: TEXT_QUESTION_TYPES.has(String(currentQuestion.value.type || '')) ? val : null,
       spent_seconds: spentSeconds
     })
     questionEnterAt.value = Date.now()
