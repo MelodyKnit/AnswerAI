@@ -464,3 +464,53 @@ AI应深度介入出题、阅卷、分析、报告、对话和学习建议，而
 ## 十、总结
 
 这个项目的重点不只是“学生在线考试”，而是通过AI把考试变成一个可分析、可解释、可追踪、可改进的教学数据入口。对教师而言，平台帮助其更高效地洞察班级与学生问题并制定教学策略；对学生而言，平台帮助其真正搞清楚自己不会什么、为什么不会、接下来该如何补齐。只有这样，AI考试答题平台才算真正体现出先进、智能和AI化的价值。
+
+## 十一、前端页面实现对齐清单（2026-03-16）
+
+以下为当前前端路由实际实现页面，用于与产品说明对齐。
+
+### 1. 公共页面
+
+- /
+- /auth
+- /design
+
+### 2. 学生端页面
+
+- /app/student/dashboard
+- /app/student/exams
+- /app/student/exams/:id/prep
+- /app/student/exams/:id/session/:sessionId
+- /app/student/results/:id
+- /app/student/results/:id/question/:questionId
+- /app/student/ai-chat
+- /app/student/analytics/knowledge-map
+- /app/student/study-plan
+- /app/student/study-plan/tasks/:taskId
+- /app/student/growth
+- /app/student/profile
+
+### 3. 教师端页面
+
+- /app/teacher/dashboard
+- /app/teacher/classes
+- /app/teacher/classes/:id
+- /app/teacher/exams
+- /app/teacher/exams/create
+- /app/teacher/exams/:id
+- /app/teacher/exams/:id/review
+- /app/teacher/review
+- /app/teacher/retake-requests
+- /app/teacher/analytics
+- /app/teacher/questions
+- /app/teacher/questions/:id/preview
+- /app/teacher/settings
+- /app/teacher/settings/profile
+- /app/teacher/settings/notifications
+- /app/teacher/settings/security
+
+### 4. 对齐维护规则
+
+- 新增或删除路由时，同步更新本节与 docs/api.md 的实现对齐附录。
+- 文档描述中的“规划接口/规划页面”必须明确标注“规划中”，避免与已实现能力混淆。
+- 版本发布前，至少执行一次“路由清单 + 接口清单”人工核对。
