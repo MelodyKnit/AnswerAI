@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { LogOut, User as UserIcon, Book, Building, ChevronRight, GraduationCap } from 'lucide-vue-next'
+import { LogOut, User as UserIcon, Book, Building, ChevronRight, GraduationCap, Settings2 } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import http from '@/lib/http'
 import { useRouter } from 'vue-router'
@@ -29,10 +29,19 @@ const handleLogout = () => {
   authStore.logout()
   router.push('/auth')
 }
+
+const goProfileSettings = () => {
+  router.push('/app/student/settings/profile')
+}
 </script>
 
 <template>
   <div class="view-profile animate-fade-in">
+    <header class="profile-head">
+      <h1>我的档案</h1>
+      <p>查看班级信息与维护个人资料。</p>
+    </header>
+
     <section class="profile-card">
       <div class="avatar-circle">
         <span>{{ (authStore.user?.username || '用户').charAt(0).toUpperCase() }}</span>
@@ -83,6 +92,11 @@ const handleLogout = () => {
         <h2>系统设置</h2>
       </div>
       <div class="settings-list">
+        <div class="settings-item" @click="goProfileSettings">
+          <Settings2 :size="18" />
+          <span>编辑个人档案信息</span>
+          <ChevronRight :size="16" class="item-arrow" />
+        </div>
         <div class="settings-item text-destructive" @click="handleLogout">
           <LogOut :size="18" />
           <span>退出登录</span>
@@ -103,11 +117,32 @@ const handleLogout = () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding-top: 4px;
-  padding-bottom: 16px;
+  min-height: calc(100vh - 56px - 72px);
+  width: calc(100% + 32px);
+  margin: -24px -16px -24px;
+  padding: 34px 16px 38px;
   background:
-    radial-gradient(circle at 88% -12%, rgba(15, 118, 110, 0.12), transparent 34%),
+    radial-gradient(circle at 88% -12%, rgba(15, 118, 110, 0.14), transparent 34%),
     linear-gradient(180deg, #f9fbfa 0%, var(--profile-bg) 100%);
+}
+
+.profile-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.profile-head h1 {
+  margin: 0;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+  color: var(--profile-ink);
+}
+
+.profile-head p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--profile-soft);
 }
 
 .profile-card {
@@ -119,6 +154,11 @@ const handleLogout = () => {
   border-radius: 14px;
   border: 1px solid var(--profile-line);
   box-shadow: 0 8px 20px rgba(18, 38, 28, 0.05);
+}
+
+.item-arrow {
+  margin-left: auto;
+  color: var(--profile-soft);
 }
 
 .avatar-circle {
@@ -316,5 +356,25 @@ const handleLogout = () => {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@media (min-width: 768px) {
+  .view-profile {
+    width: calc(100% + 64px);
+    margin: -40px -32px -40px;
+    padding: 56px 32px 52px;
+    min-height: calc(100vh - 56px - 72px);
+  }
+}
+
+@media (max-width: 640px) {
+  .profile-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .profile-head h1 {
+    font-size: 26px;
+  }
 }
 </style>

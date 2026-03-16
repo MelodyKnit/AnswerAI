@@ -2,10 +2,9 @@ import json
 import random
 from typing import Any
 
-from openai import OpenAI
-
 from app.core.config import settings
 from app.schemas.teacher import AIQuestionGenerateRequest
+from app.services.ai_client import request_chat_completion
 
 
 def generate_questions_with_llm(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
@@ -37,17 +36,14 @@ def _call_single_model(cfg, payload: AIQuestionGenerateRequest) -> list[dict[str
     """
     处理  call single model 请求并返回结果。
     """
-    client = OpenAI(base_url=cfg.url, api_key=cfg.key)
     prompt = _build_prompt(payload)
-    completion = client.chat.completions.create(
-        model=cfg.model,
+    content = request_chat_completion(
+        cfg=cfg,
+        scene="teacher_question_generate",
+        system_prompt="你是严谨的中小学出题助手，只输出 JSON。",
+        user_prompt=prompt,
         temperature=0.4,
-        messages=[
-            {"role": "system", "content": "你是严谨的中小学出题助手，只输出 JSON。"},
-            {"role": "user", "content": prompt},
-        ],
     )
-    content = (completion.choices[0].message.content or "").strip()
     data = _extract_json(content)
     questions = data.get("questions", []) if isinstance(data, dict) else []
     if not isinstance(questions, list) or not questions:

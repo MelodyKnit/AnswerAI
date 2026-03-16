@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
 from app.core.response import success_response
+from app.models.academic import ClassRoom, ClassStudent
+from app.models.exam import Exam
 from app.models.user import Report, User
 from app.schemas.ai import ReportActionRequest, ReportGenerateRequest
 from app.services.reports import build_report_payload, serialize_report
@@ -11,6 +13,41 @@ from app.services.tasks import complete_ai_task, mark_ai_task_running, queue_ai_
 
 
 router = APIRouter()
+
+
+def _assert_report_scope(payload: ReportGenerateRequest, current_user: User, db: Session) -> tuple[int | None, int | None, int | None]:
+    exam_id = payload.exam_id
+    class_id = payload.class_id
+    student_id = payload.student_id
+
+    if current_user.role == "student":
+        if payload.report_type != "student":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Students can only generate personal reports")
+        if student_id is not None and student_id != current_user.id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+        return exam_id, None, current_user.id
+
+    if current_user.role == "teacher":
+        if class_id is not None:
+            classroom = db.scalar(select(ClassRoom).where(ClassRoom.id == class_id, ClassRoom.teacher_id == current_user.id))
+            if not classroom:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No permission for this class")
+
+        if exam_id is not None:
+            exam = db.scalar(select(Exam).where(Exam.id == exam_id, Exam.created_by == current_user.id))
+            if not exam:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No permission for this exam")
+
+        if student_id is not None:
+            relation = db.scalar(
+                select(ClassStudent).where(ClassStudent.student_id == student_id, ClassStudent.teacher_id == current_user.id)
+            )
+            if not relation:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No permission for this student")
+
+        return exam_id, class_id, student_id
+
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
 
 
 @router.get("/reports")
@@ -48,29 +85,36 @@ def generate_report(payload: ReportGenerateRequest, current_user: User = Depends
     """
     处理 generate report 请求并返回结果。
     """
+    safe_exam_id, safe_class_id, safe_student_id = _assert_report_scope(payload, current_user, db)
+
     task = queue_ai_task(
         db,
         task_type="report_generate",
         resource_type="report",
         resource_id=None,
         created_by=current_user.id,
-        request_payload=payload.model_dump(),
+        request_payload={
+            **payload.model_dump(),
+            "exam_id": safe_exam_id,
+            "class_id": safe_class_id,
+            "student_id": safe_student_id,
+        },
     )
     mark_ai_task_running(db, task, progress=25)
     report_title, summary, content = build_report_payload(
         db,
         report_type=payload.report_type,
-        exam_id=payload.exam_id,
-        class_id=payload.class_id,
-        student_id=payload.student_id or (current_user.id if current_user.role == "student" else None),
+        exam_id=safe_exam_id,
+        class_id=safe_class_id,
+        student_id=safe_student_id,
         title=payload.title,
     )
     report = Report(
         report_type=payload.report_type,
         title=report_title,
-        exam_id=payload.exam_id,
-        class_id=payload.class_id,
-        student_id=payload.student_id or (current_user.id if current_user.role == "student" else None),
+        exam_id=safe_exam_id,
+        class_id=safe_class_id,
+        student_id=safe_student_id,
         status="ready",
         summary=summary,
         content_json=content,

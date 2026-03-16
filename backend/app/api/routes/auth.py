@@ -1,10 +1,13 @@
 from datetime import datetime, UTC
+import logging
+from time import perf_counter
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
+from app.core.config import settings
 from app.core.response import success_response
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.academic import ClassRoom, ClassStudent
@@ -13,6 +16,7 @@ from app.schemas.auth import ChangePasswordRequest, LoginRequest, ProfileUpdateR
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/auth/register")
@@ -27,6 +31,10 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     existing_username = db.scalar(select(User).where(User.username == payload.username))
     if existing_username:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already registered")
+
+    if payload.role == "teacher":
+        if not payload.teacher_invite_code or payload.teacher_invite_code.strip() != settings.teacher_invite_code:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid teacher invite code")
 
     user = User(
         role=payload.role,
@@ -95,7 +103,11 @@ def me(current_user: User = Depends(get_current_user)):
     """
     处理 me 请求并返回结果。
     """
-    return success_response({"user": _serialize_user(current_user)})
+    started_at = perf_counter()
+    payload = success_response({"user": _serialize_user(current_user)})
+    elapsed_ms = int((perf_counter() - started_at) * 1000)
+    logger.info("API perf path=/auth/me user_id=%s elapsed_ms=%d", current_user.id, elapsed_ms)
+    return payload
 
 
 @router.post("/users/profile/update")
@@ -103,7 +115,20 @@ def update_profile(payload: ProfileUpdateRequest, current_user: User = Depends(g
     """
     更新已有的 profile 记录。
     """
-    for field, value in payload.model_dump(exclude_none=True).items():
+    update_data = payload.model_dump(exclude_none=True)
+
+    # 学生只允许更新与个人身份直接相关的信息，禁止修改学校/年级。
+    if current_user.role == "student":
+        allowed_fields = {"name", "email", "phone", "avatar_url"}
+        update_data = {key: value for key, value in update_data.items() if key in allowed_fields}
+
+    next_email = update_data.get("email")
+    if next_email and next_email != current_user.email:
+        existing = db.scalar(select(User).where(User.email == next_email, User.id != current_user.id))
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+    for field, value in update_data.items():
         setattr(current_user, field, value)
     db.add(current_user)
     db.commit()

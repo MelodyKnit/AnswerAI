@@ -19,6 +19,7 @@ const isLightboxOpen = ref(false)
 const lightboxSrc = ref('')
 const lightboxAlt = ref('题目插图')
 const isAnswerSheetOpen = ref(false)
+const questionEnterAt = ref(Date.now())
 let countdownTimer: number | null = null
 
 const currentQuestion = computed(() => questions.value[currentIndex.value] || null)
@@ -84,7 +85,7 @@ const getBackendOrigin = () => {
 const normalizeAssetUrl = (rawUrl: string) => {
   const trimmed = rawUrl.trim()
   if (!trimmed) return ''
-  if (/^(https?:)?\/\//i.test(trimmed) || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('//') || trimmed.startsWith('blob:')) {
     return trimmed
   }
   const backendOrigin = getBackendOrigin()
@@ -173,6 +174,8 @@ onMounted(async () => {
     loading.value = false
   }
 
+  questionEnterAt.value = Date.now()
+
   startCountdown()
 })
 
@@ -205,6 +208,7 @@ const saveCurrentAnswer = async () => {
   
   const qId = currentQuestion.value.question_id
   const val = answers.value[qId]
+  const spentSeconds = Math.max(1, Math.round((Date.now() - questionEnterAt.value) / 1000))
   
   try {
     await http.post('/student/exams/answer/save', {
@@ -213,8 +217,9 @@ const saveCurrentAnswer = async () => {
       question_id: qId,
       answer: currentQuestion.value.type === 'multiple_choice' ? val : (currentQuestion.value.type === 'single_choice' ? val : null),
       answer_text: (currentQuestion.value.type === 'fill_in_the_blank' || currentQuestion.value.type === 'short_answer') ? val : null,
-      spent_seconds: 10 // Mock for now
+      spent_seconds: spentSeconds
     })
+    questionEnterAt.value = Date.now()
   } catch (err) {
     console.error('Failed to save answer:', err)
   }

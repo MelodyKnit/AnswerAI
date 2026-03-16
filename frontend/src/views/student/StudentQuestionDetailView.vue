@@ -36,7 +36,7 @@ const getBackendOrigin = () => {
 const normalizeAssetUrl = (rawUrl: string) => {
   const trimmed = rawUrl.trim()
   if (!trimmed) return ''
-  if (/^(https?:)?\/\//i.test(trimmed) || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('//') || trimmed.startsWith('blob:')) {
     return trimmed
   }
   const backendOrigin = getBackendOrigin()

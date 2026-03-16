@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24
     database_url: str = f"sqlite:///{(DATA_DIR / 'app.db').as_posix()}"
     llm_configs: list[LLMConfig] = Field(default_factory=list)
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"])
+    teacher_invite_code: str = "dev-teacher-invite"
     debug: bool = True
 
 

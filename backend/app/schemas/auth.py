@@ -33,6 +33,7 @@ class LoginRequest(BaseModel):
 
 class ProfileUpdateRequest(BaseModel):
     name: str | None = None
+    email: EmailStr | None = None
     phone: str | None = None
     avatar_url: str | None = None
     school_name: str | None = None

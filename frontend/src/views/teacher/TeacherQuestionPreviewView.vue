@@ -32,7 +32,7 @@ const getBackendOrigin = () => {
 const normalizeAssetUrl = (rawUrl: string) => {
   const trimmed = rawUrl.trim()
   if (!trimmed) return ''
-  if (/^(https?:)?\/\//i.test(trimmed) || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('//') || trimmed.startsWith('blob:')) {
     return trimmed
   }
   const backendOrigin = getBackendOrigin()
@@ -55,7 +55,10 @@ const renderRichText = (value?: string) => {
   if (!value) return ''
   const escaped = escapeHtml(value)
   return escaped
-    .replace(/!\[[^\]]*\]\(([^)]+)\)/g, (_, src) => `<img class="preview-rich-image" src="${normalizeAssetUrl(src)}" alt="题目插图" onerror="this.dataset.failed=1" />`)
+    .replace(/!\[[^\]]*\]\(([^)]+)\)/g, (_, src) => {
+      const normalized = normalizeAssetUrl(String(src || ''))
+      return normalized ? `<img class="preview-rich-image" src="${normalized}" alt="题目插图" />` : ''
+    })
     .replace(/\n/g, '<br />')
 }
 

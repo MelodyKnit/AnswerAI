@@ -1,9 +1,10 @@
 import json
 from datetime import datetime, UTC, timedelta
+import logging
+from time import perf_counter
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from openai import OpenAI
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
 from app.models.user import AITask, ReviewItem, StudyPlan, StudyTask, User
 from app.schemas.student import BatchSaveAnswerRequest, BehaviorReportRequest, SaveAnswerRequest, StartExamRequest, StudentAIFollowUpRequest, StudentRetakeRequestCreate, StudyTaskActionRequest, SubmitExamRequest
 from app.services.learning import build_submission_analysis, generate_study_plan
+from app.services.ai_client import request_chat_completion
 from app.services.realtime import realtime_events, submission_channel
 from app.services.scoring import OBJECTIVE_TYPES, SUBJECTIVE_TYPES, compute_objective_score, parse_answer, serialize_answer
 from app.services.student_growth_ai import build_growth_ability_profile
@@ -23,6 +25,7 @@ from app.services.tasks import complete_ai_task, mark_ai_task_running, queue_ai_
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _study_task_type_label(task_type: str | None) -> str:
@@ -36,6 +39,8 @@ def _study_task_type_label(task_type: str | None) -> str:
 
 GROWTH_PROFILE_CACHE_TTL = timedelta(minutes=20)
 _growth_profile_cache: dict[str, dict[str, Any]] = {}
+STUDY_ARTIFACT_CLEANUP_TTL = timedelta(minutes=10)
+_study_artifact_cleanup_cache: dict[int, datetime] = {}
 
 
 @router.get("/student/exams")
@@ -423,8 +428,9 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
     请求学生的总览数据，包括近期待考数量、基于最近考试数据提取的薄弱知识点分析，
     以及系统生成的个性化待办学习任务等，驱动学生控制台面板的内容呈现。
     """
+    started_at = perf_counter()
     now = datetime.now(UTC)
-    _cleanup_invalid_study_artifacts_for_student(db, current_user.id)
+    _maybe_cleanup_invalid_study_artifacts_for_student(db, current_user.id, now)
     upcoming_count = db.scalar(
         select(func.count()).select_from(Exam)
         .join(ExamClass, ExamClass.exam_id == Exam.id)
@@ -478,16 +484,94 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
         .order_by(StudyTask.priority.asc(), StudyTask.created_at.desc())
         .limit(5)
     ).all()
-    return success_response(
+
+    stat_query = (
+        select(func.count(SubmissionAnswer.id), func.max(SubmissionAnswer.updated_at))
+        .select_from(SubmissionAnswer)
+        .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+        .where(ExamSubmission.student_id == current_user.id)
+        .where(ExamSubmission.status.in_(["submitted", "completed", "reviewed"]))
+    )
+    answer_count, latest_answer_at = db.execute(stat_query).first() or (0, None)
+    fingerprint = f"{int(answer_count or 0)}:{latest_answer_at.isoformat() if latest_answer_at else 'none'}"
+
+    cache_key = f"{current_user.id}:dashboard_overview"
+    cached = _growth_profile_cache.get(cache_key)
+    cache_hit = False
+    growth_payload: dict[str, Any] = {}
+    if cached:
+        cache_time = cached.get("cached_at")
+        if isinstance(cache_time, datetime) and now - cache_time <= GROWTH_PROFILE_CACHE_TTL and cached.get("fingerprint") == fingerprint:
+            payload = cached.get("payload")
+            if isinstance(payload, dict):
+                growth_payload = payload
+                cache_hit = True
+
+    if not cache_hit:
+        answer_rows = db.execute(
+            select(SubmissionAnswer, Question, Subject)
+            .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+            .join(Question, SubmissionAnswer.question_id == Question.id)
+            .outerjoin(Subject, Question.subject_id == Subject.id)
+            .where(ExamSubmission.student_id == current_user.id)
+            .where(ExamSubmission.status.in_(["submitted", "completed", "reviewed"]))
+            .order_by(SubmissionAnswer.updated_at.desc())
+            .limit(180)
+        ).all()
+        answer_records = [
+            {
+                "subject": subject_obj.name if subject_obj else None,
+                "question_type": question.type,
+                "stem": question.stem,
+                "analysis": question.analysis,
+                "is_correct": answer.is_correct,
+            }
+            for answer, question, subject_obj in answer_rows
+        ]
+        growth_payload = build_growth_ability_profile(answer_records, refine_with_llm=False)
+        _growth_profile_cache[cache_key] = {
+            "fingerprint": fingerprint,
+            "cached_at": now,
+            "payload": growth_payload,
+        }
+
+    ability_profile = growth_payload.get("ability_profile") if isinstance(growth_payload, dict) else []
+    if not isinstance(ability_profile, list):
+        ability_profile = []
+    ability_profile_summary = {
+        str(item.get("name") or f"能力{i + 1}"): round(float(item.get("accuracy") or 0), 2)
+        for i, item in enumerate(ability_profile[:3])
+    }
+    if not ability_profile_summary:
+        ability_profile_summary = {"审题能力": 0.0, "计算能力": 0.0, "综合应用能力": 0.0}
+
+    response_payload = success_response(
         {
             "upcoming_exam_count": upcoming_count,
             "recent_exams": [{"id": item.id, "title": item.title} for item in recent_exams],
             "latest_result_summary": _serialize_submission(latest_submission) if latest_submission else None,
             "ai_reminders": ["建议优先复习最近一次考试中的高频错题。"],
-            "ability_profile_summary": {"审题能力": 0.7, "计算能力": 0.68, "综合应用能力": 0.6},
+            "ability_profile_summary": ability_profile_summary,
             "recommended_tasks": [{"task_id": item.id, "title": item.title, "priority": item.priority} for item in recommended_tasks],
         }
     )
+    elapsed_ms = int((perf_counter() - started_at) * 1000)
+    logger.info(
+        "API perf path=/student/dashboard/overview user_id=%s elapsed_ms=%d cache_hit=%s answer_count=%d",
+        current_user.id,
+        elapsed_ms,
+        cache_hit,
+        int(answer_count or 0),
+    )
+    return response_payload
+
+
+def _maybe_cleanup_invalid_study_artifacts_for_student(db: Session, student_id: int, now: datetime) -> None:
+    last_cleanup = _study_artifact_cleanup_cache.get(student_id)
+    if isinstance(last_cleanup, datetime) and now - last_cleanup <= STUDY_ARTIFACT_CLEANUP_TTL:
+        return
+    _cleanup_invalid_study_artifacts_for_student(db, student_id)
+    _study_artifact_cleanup_cache[student_id] = now
 
 
 @router.get("/student/results/overview")
@@ -677,16 +761,13 @@ def student_ai_follow_up(
     reply_text = ""
     for cfg in settings.llm_configs:
         try:
-            client = OpenAI(base_url=cfg.url, api_key=cfg.key)
-            completion = client.chat.completions.create(
-                model=cfg.model,
+            reply_text = request_chat_completion(
+                cfg=cfg,
+                scene="student_follow_up_chat",
+                system_prompt="你是耐心且精确的学习辅导助手。",
+                user_prompt=prompt,
                 temperature=0.2,
-                messages=[
-                    {"role": "system", "content": "你是耐心且精确的学习辅导助手。"},
-                    {"role": "user", "content": prompt},
-                ],
             )
-            reply_text = (completion.choices[0].message.content or "").strip()
             if reply_text:
                 break
         except Exception:

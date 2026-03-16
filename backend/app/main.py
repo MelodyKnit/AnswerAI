@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -10,6 +11,9 @@ from app.core.config import settings
 from app.core.response import success_response
 from app.db.init_db import seed_subjects
 from app.db.session import SessionLocal
+
+
+logging.getLogger("app.services.ai_client").setLevel(logging.INFO)
 
 
 @asynccontextmanager
@@ -28,7 +32,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.project_name, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

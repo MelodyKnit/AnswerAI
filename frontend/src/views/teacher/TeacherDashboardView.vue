@@ -9,10 +9,10 @@ const authStore = useAuthStore()
 const router = useRouter()
 
 const stats = ref([
-  { label: '今日应考', value: '-', icon: Users },
-  { label: '待批阅', value: '-', icon: FileText },
-  { label: '平均分', value: '-', icon: CheckCircle },
-  { label: '学习时长(均)', value: '-', icon: Clock },
+  { label: '今日应考', value: '-', icon: Users, route: '', tone: 'neutral' },
+  { label: '待批阅', value: '-', icon: FileText, route: '', tone: 'neutral' },
+  { label: '平均分', value: '-', icon: CheckCircle, route: '', tone: 'neutral' },
+  { label: '学习时长(均)', value: '-', icon: Clock, route: '', tone: 'neutral' },
 ])
 
 const quickActions = [
@@ -45,12 +45,13 @@ const fetchData = async () => {
     const avgScore = trend.length > 0
       ? (trend.reduce((sum: number, item: any) => sum + Number(item.avg_score || 0), 0) / trend.length).toFixed(1)
       : '-'
+    const hasNonZeroAverage = trend.some((item: any) => Number(item?.avg_score || 0) > 0)
 
     stats.value = [
-      { label: '考试总数', value: String(overview.exam_count ?? 0), icon: Users },
-      { label: '待批阅', value: String(overview.pending_review_count ?? 0), icon: FileText },
-      { label: '风险学生', value: String(overview.risk_student_count ?? 0), icon: CheckCircle },
-      { label: '平均分', value: avgScore, icon: Clock },
+      { label: '考试总数', value: String(overview.exam_count ?? 0), icon: Users, route: '/app/teacher/exams', tone: 'blue' },
+      { label: '待批阅', value: String(overview.pending_review_count ?? 0), icon: FileText, route: '/app/teacher/review', tone: 'amber' },
+      { label: '风险学生', value: String(overview.risk_student_count ?? 0), icon: CheckCircle, route: '/app/teacher/analytics', tone: 'red' },
+      { label: '平均分', value: avgScore, icon: Clock, route: '', tone: hasNonZeroAverage ? 'teal' : 'slate' },
     ]
   } catch(e) {
     console.error(e)
@@ -84,13 +85,25 @@ onMounted(() => {
     </section>
 
     <section class="metrics-grid">
-      <div v-for="stat in stats" :key="stat.label" class="metric-card">
+      <component
+        v-for="stat in stats"
+        :key="stat.label"
+        :is="stat.route ? 'button' : 'div'"
+        class="metric-card"
+        :class="[
+          `tone-${stat.tone || 'neutral'}`,
+          stat.route ? 'metric-card--interactive' : 'metric-card--plain',
+        ]"
+        :type="stat.route ? 'button' : undefined"
+        @click="stat.route ? navigate(stat.route) : undefined"
+      >
         <div class="metric-top">
           <component :is="stat.icon" :size="18" class="metric-icon" />
           <span class="metric-label">{{ stat.label }}</span>
         </div>
         <div class="metric-value">{{ stat.value }}</div>
-      </div>
+        <span v-if="stat.route" class="metric-link-tip">点击查看</span>
+      </component>
     </section>
 
     <section class="section-block">
@@ -173,11 +186,67 @@ onMounted(() => {
 .tool-label { font-size: 12px; color: var(--ink); font-weight: 500; }
 .metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 @media (min-width: 768px) { .metrics-grid { grid-template-columns: repeat(4, 1fr); } }
-.metric-card { padding: 16px; border: 1px solid var(--line); background: #fff; border-radius: var(--radius-md); display: flex; flex-direction: column; gap: 12px; }
+.metric-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+
+.metric-card--interactive {
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.metric-card--interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.metric-card--interactive:active {
+  transform: translateY(0);
+}
+
+.metric-card--interactive:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+
 .metric-top { display: flex; align-items: center; gap: 8px; }
 .metric-icon { color: var(--ink-soft); }
 .metric-label { font-size: 13px; color: var(--ink-soft); }
 .metric-value { font-size: 24px; font-weight: 600; color: var(--ink); letter-spacing: -0.02em; }
+.metric-link-tip { font-size: 11px; color: #64748b; }
+
+.tone-blue .metric-icon,
+.tone-blue .metric-label,
+.tone-blue .metric-link-tip { color: #1d4ed8; }
+.tone-blue .metric-value { color: #1e40af; }
+.tone-blue.metric-card--interactive:hover { border-color: #bfdbfe; }
+
+.tone-amber .metric-icon,
+.tone-amber .metric-label,
+.tone-amber .metric-link-tip { color: #b45309; }
+.tone-amber .metric-value { color: #92400e; }
+.tone-amber.metric-card--interactive:hover { border-color: #fcd34d; }
+
+.tone-red .metric-icon,
+.tone-red .metric-label,
+.tone-red .metric-link-tip { color: #b91c1c; }
+.tone-red .metric-value { color: #991b1b; }
+.tone-red.metric-card--interactive:hover { border-color: #fca5a5; }
+
+.tone-slate .metric-icon,
+.tone-slate .metric-label { color: #475569; }
+.tone-slate .metric-value { color: #1f2937; }
+
+.tone-teal .metric-icon,
+.tone-teal .metric-label { color: #0f766e; }
+.tone-teal .metric-value { color: #0f766e; }
 .section-block { display: flex; flex-direction: column; gap: 16px; }
 .section-title h2 { font-size: 16px; font-weight: 600; color: var(--ink); }
 .title-with-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

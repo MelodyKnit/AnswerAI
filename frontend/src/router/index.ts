@@ -11,6 +11,7 @@ import StudentExamsView from '../views/student/StudentExamsView.vue'
 import StudentExamSessionView from '../views/student/StudentExamSessionView.vue'
 import StudentGrowthView from '../views/student/StudentGrowthView.vue'
 import StudentProfileView from '../views/student/StudentProfileView.vue'
+import StudentSettingsProfileView from '../views/student/StudentSettingsProfileView.vue'
 import StudentKnowledgeMapView from '../views/student/StudentKnowledgeMapView.vue'
 import StudentQuestionDetailView from '../views/student/StudentQuestionDetailView.vue'
 import StudentResultsOverviewView from '../views/student/StudentResultsOverviewView.vue'
@@ -134,6 +135,12 @@ const router = createRouter({
             meta: { title: '我的档案', section: 'student' }
           },
         {
+          path: 'student/settings/profile',
+          name: 'student-settings-profile',
+          component: StudentSettingsProfileView,
+          meta: { title: '个人资料', section: 'student', hideNav: true }
+        },
+        {
           path: 'teacher/dashboard',
           name: 'teacher-dashboard',
           component: TeacherDashboardView,
@@ -249,10 +256,23 @@ const router = createRouter({
   ],
 })
 
-router.beforeEach((to, _from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore()
+
+  if (authStore.token && !authStore.user) {
+    try {
+      await authStore.fetchUser()
+    } catch {
+      // handled by store/http interceptors
+    }
+  }
+
   if (to.meta.requiresAuth && !authStore.token) {
     next({ name: 'auth' })
+  } else if (to.meta.requiresAuth && to.meta.section === 'teacher' && authStore.user?.role !== 'teacher') {
+    next('/app/student/dashboard')
+  } else if (to.meta.requiresAuth && to.meta.section === 'student' && authStore.user?.role !== 'student') {
+    next('/app/teacher/dashboard')
   } else if (to.meta.requiresGuest && authStore.token) {
     const defaultRoute = authStore.user?.role === 'teacher' ? '/app/teacher/dashboard' : '/app/student/dashboard'
     next(defaultRoute)

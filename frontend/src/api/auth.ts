@@ -2,6 +2,7 @@ import http from '@/lib/http'
 
 export type ProfileUpdatePayload = {
   name?: string
+  email?: string
   phone?: string
   avatar_url?: string
   school_name?: string

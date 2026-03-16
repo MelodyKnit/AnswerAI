@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, UserPlus, Download, X, Loader2, Trash2, BrainCircuit } from 'lucide-vue-next'
-import { getClassDetail, getClassStudents, inviteStudentToClass, removeStudentFromClass } from '@/api/teacher'
+import { ArrowLeft, UserPlus, Download, X, Loader2, Trash2, BrainCircuit, Search } from 'lucide-vue-next'
+import { getClassDetail, getClassStudents, inviteStudentToClass, removeStudentFromClass, getTeacherDashboardOverview } from '@/api/teacher'
 
 const route = useRoute()
 const router = useRouter()
@@ -11,23 +11,82 @@ const classId = Number(route.params.id)
 const classDetail = ref<any>(null)
 const students = ref<any[]>([])
 const isLoading = ref(true)
+const keyword = ref('')
+const riskFilter = ref<'all' | 'high' | 'medium' | 'low' | 'unknown'>('all')
 
 const showInviteModal = ref(false)
 const inviteStudentIdInput = ref('')
 const inviteLoading = ref(false)
 const actionMessage = ref('')
 
-const studentCountText = computed(() => `${students.value.length}`)
+const riskMap = ref<Record<number, 'high' | 'medium' | 'low'>>({})
+
+const normalizeRiskLevel = (risk: unknown): 'high' | 'medium' | 'low' | 'unknown' => {
+  const value = String(risk || '').trim().toLowerCase()
+  if (value === 'high') return 'high'
+  if (value === 'medium') return 'medium'
+  if (value === 'low') return 'low'
+  return 'unknown'
+}
+
+const getRiskLabel = (risk: 'high' | 'medium' | 'low' | 'unknown') => {
+  if (risk === 'high') return '学习高危'
+  if (risk === 'medium') return '学习预警'
+  if (risk === 'low') return '持续关注'
+  return '待评估'
+}
+
+const mergedStudents = computed(() => {
+  return students.value.map((student) => {
+    const mappedRisk = riskMap.value[Number(student.id)]
+    const risk_level = normalizeRiskLevel(mappedRisk ?? student.risk_level)
+    return {
+      ...student,
+      risk_level,
+    }
+  })
+})
+
+const filteredStudents = computed(() => {
+  const query = keyword.value.trim().toLowerCase()
+  return mergedStudents.value.filter((student) => {
+    const riskOk = riskFilter.value === 'all' ? true : student.risk_level === riskFilter.value
+    if (!riskOk) return false
+
+    if (!query) return true
+
+    const fields = [student.name, student.email, student.phone, String(student.id ?? '')]
+      .map((item) => String(item || '').toLowerCase())
+    return fields.some((item) => item.includes(query))
+  }).sort((a, b) => {
+    const rank = { high: 0, medium: 1, low: 2, unknown: 3 }
+    return rank[a.risk_level as keyof typeof rank] - rank[b.risk_level as keyof typeof rank]
+  })
+})
+
+const studentCountText = computed(() => `${filteredStudents.value.length} / ${students.value.length}`)
 
 const fetchData = async () => {
   try {
     isLoading.value = true
-    const [detailRes, studentsRes] = await Promise.all([
+    const [detailRes, studentsRes, overviewRes] = await Promise.all([
       getClassDetail(classId),
       getClassStudents({ class_id: classId, page_size: 100 }),
+      getTeacherDashboardOverview(),
     ])
     classDetail.value = (detailRes as any).class
     students.value = (studentsRes as any).items || []
+
+    const riskStudents = ((overviewRes as any)?.risk_students || []) as Array<any>
+    const map: Record<number, 'high' | 'medium' | 'low'> = {}
+    for (const item of riskStudents) {
+      const sid = Number(item?.student_id)
+      const risk = normalizeRiskLevel(item?.risk_level)
+      if (Number.isFinite(sid) && risk !== 'unknown') {
+        map[sid] = risk
+      }
+    }
+    riskMap.value = map
   } catch (error: any) {
     actionMessage.value = error?.message || '加载班级详情失败'
     console.error('Failed to fetch class details', error)
@@ -200,8 +259,34 @@ const removeStudent = async (student: any) => {
 
         <p v-if="actionMessage" class="action-message">{{ actionMessage }}</p>
 
-        <div class="list-container" v-if="students.length > 0">
-          <div v-for="student in students" :key="student.id" class="list-item">
+        <div class="filters">
+          <label class="search-wrap" aria-label="搜索学生">
+            <Search :size="14" />
+            <input
+              v-model="keyword"
+              type="text"
+              placeholder="搜索姓名/ID/手机号/邮箱"
+              class="search-input"
+            />
+          </label>
+
+          <select v-model="riskFilter" class="risk-select" aria-label="风险筛选">
+            <option value="all">全部风险</option>
+            <option value="high">仅看高危</option>
+            <option value="medium">仅看预警</option>
+            <option value="low">仅看关注</option>
+            <option value="unknown">仅看待评估</option>
+          </select>
+        </div>
+
+        <div class="list-container" v-if="filteredStudents.length > 0">
+          <div
+            v-for="student in filteredStudents"
+            :key="student.id"
+            class="list-item"
+            :class="[`risk-${student.risk_level}`]"
+          >
+            <span class="risk-ribbon" :class="[`risk-${student.risk_level}`]">{{ getRiskLabel(student.risk_level) }}</span>
             <div class="student-info">
               <div class="avatar">{{ student.name?.charAt(0) || '学' }}</div>
               <div class="student-text">
@@ -221,7 +306,7 @@ const removeStudent = async (student: any) => {
             </div>
           </div>
         </div>
-        <div v-else class="empty-state">无学生加入</div>
+        <div v-else class="empty-state">没有符合筛选条件的学生</div>
       </section>
     </template>
 
@@ -400,6 +485,44 @@ const removeStudent = async (student: any) => {
   color: #0f766e;
 }
 
+.filters {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+  background: #fff;
+  color: var(--ink-soft);
+}
+
+.search-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  height: 36px;
+  font-size: 13px;
+  color: var(--ink);
+  background: transparent;
+}
+
+.risk-select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0 10px;
+  height: 36px;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fff;
+}
+
 .list-container {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -409,15 +532,60 @@ const removeStudent = async (student: any) => {
 }
 
 .list-item {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px;
+  padding: 18px 12px 12px;
   border-bottom: 1px solid var(--line);
 }
 
 .list-item:last-child {
   border-bottom: none;
+}
+
+.risk-ribbon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 10px 4px 8px;
+  border-bottom-right-radius: 8px;
+  letter-spacing: 0.02em;
+}
+
+.risk-ribbon.risk-high {
+  color: #fff;
+  background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+}
+
+.risk-ribbon.risk-medium {
+  color: #7c2d12;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+}
+
+.risk-ribbon.risk-low {
+  color: #075985;
+  background: linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%);
+}
+
+.risk-ribbon.risk-unknown {
+  color: #334155;
+  background: #e2e8f0;
+}
+
+.list-item.risk-high {
+  box-shadow: inset 3px 0 0 #ef4444;
+}
+
+.list-item.risk-medium {
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+.list-item.risk-low {
+  box-shadow: inset 3px 0 0 #60a5fa;
 }
 
 .student-info {
@@ -512,6 +680,10 @@ const removeStudent = async (student: any) => {
 
   .list-item {
     align-items: center;
+  }
+
+  .filters {
+    grid-template-columns: 1fr;
   }
 }
 

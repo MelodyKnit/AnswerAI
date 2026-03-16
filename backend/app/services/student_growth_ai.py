@@ -4,9 +4,8 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from openai import OpenAI
-
 from app.core.config import settings
+from app.services.ai_client import request_chat_completion
 
 
 @dataclass(frozen=True)
@@ -136,7 +135,10 @@ SUBJECT_HINT_TOPIC: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 
-def build_growth_ability_profile(answer_records: list[dict[str, Any]]) -> dict[str, Any]:
+def build_growth_ability_profile(
+    answer_records: list[dict[str, Any]],
+    refine_with_llm: bool = True,
+) -> dict[str, Any]:
     if not answer_records:
         return {
             "ability_profile": [],
@@ -248,18 +250,19 @@ def build_growth_ability_profile(answer_records: list[dict[str, Any]]) -> dict[s
     recommended_books.sort(key=lambda item: len(item["related_topics"]), reverse=True)
     recommended_books = recommended_books[:6]
 
-    llm_refined = _try_refine_with_llm(
-        {
-            "ability_profile": ability_profile,
-            "topic_distribution": topic_distribution,
-            "ai_summary": ai_summary,
-            "ai_actions": ai_actions,
-            "recommended_books": recommended_books,
-        }
-    )
-    if llm_refined:
-        ai_summary = llm_refined.get("ai_summary") or ai_summary
-        ai_actions = llm_refined.get("ai_actions") or ai_actions
+    if refine_with_llm:
+        llm_refined = _try_refine_with_llm(
+            {
+                "ability_profile": ability_profile,
+                "topic_distribution": topic_distribution,
+                "ai_summary": ai_summary,
+                "ai_actions": ai_actions,
+                "recommended_books": recommended_books,
+            }
+        )
+        if llm_refined:
+            ai_summary = llm_refined.get("ai_summary") or ai_summary
+            ai_actions = llm_refined.get("ai_actions") or ai_actions
 
     ai_actions = _sanitize_ai_actions(ai_actions, topic_distribution)
 
@@ -436,16 +439,13 @@ def _try_refine_with_llm(payload: dict[str, Any]) -> dict[str, Any] | None:
 
     for cfg in settings.llm_configs:
         try:
-            client = OpenAI(base_url=cfg.url, api_key=cfg.key)
-            completion = client.chat.completions.create(
-                model=cfg.model,
+            content = request_chat_completion(
+                cfg=cfg,
+                scene="student_growth_profile_refine",
+                system_prompt="你是严谨的学习成长分析助手，只输出 JSON。",
+                user_prompt=prompt,
                 temperature=0.3,
-                messages=[
-                    {"role": "system", "content": "你是严谨的学习成长分析助手，只输出 JSON。"},
-                    {"role": "user", "content": prompt},
-                ],
             )
-            content = (completion.choices[0].message.content or "").strip()
             data = _extract_json(content)
             if isinstance(data, dict):
                 actions = data.get("ai_actions")
