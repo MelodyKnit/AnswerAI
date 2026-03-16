@@ -1396,35 +1396,59 @@ def get_exam_insights(exam_id: int, current_user: User = Depends(require_role("t
         )
     ) or 0
 
-    submissions = db.scalars(select(ExamSubmission).where(ExamSubmission.exam_id == exam.id)).all()
-    submitted_statuses = {"submitted", "reviewed"}
-    submitted_submissions = [item for item in submissions if item.status in submitted_statuses]
-    active_submissions = [item for item in submissions if item.status in {"in_progress", "submitted", "reviewed"}]
-    submitted_count = len(active_submissions)
+    exam_class_ids = db.scalars(select(ExamClass.class_id).where(ExamClass.exam_id == exam.id)).all()
+
+    submissions_query = select(ExamSubmission).where(
+        ExamSubmission.exam_id == exam.id,
+        ExamSubmission.teacher_id == current_user.id,
+        ExamSubmission.created_at >= exam.created_at,
+    )
+    if exam_class_ids:
+        submissions_query = submissions_query.where(ExamSubmission.class_id.in_(exam_class_ids))
+
+    submissions = db.scalars(submissions_query).all()
+    completed_statuses = {"submitted", "completed", "reviewed"}
+    started_statuses = {"in_progress", *completed_statuses}
+
+    completed_submissions = [item for item in submissions if item.status in completed_statuses]
+    started_submissions = [item for item in submissions if item.status in started_statuses]
+
+    completed_student_ids = {int(item.student_id) for item in completed_submissions}
+    started_student_ids = {int(item.student_id) for item in started_submissions}
+
+    submitted_count = len(completed_student_ids)
+    started_count = len(started_student_ids)
     completion_rate = round((submitted_count / target_students) if target_students else 0, 4)
 
     duration_samples: list[float] = []
-    for item in submitted_submissions:
+    for item in completed_submissions:
         if item.started_at and item.submitted_at and item.submitted_at >= item.started_at:
             duration_minutes = (item.submitted_at - item.started_at).total_seconds() / 60
             duration_samples.append(duration_minutes)
     avg_duration_minutes = round(sum(duration_samples) / len(duration_samples), 1) if duration_samples else 0.0
 
     avg_score = round(
-        float(sum(float(item.total_score or 0) for item in submitted_submissions) / len(submitted_submissions)),
+        float(sum(float(item.total_score or 0) for item in completed_submissions) / len(completed_submissions)),
         2,
-    ) if submitted_submissions else 0.0
+    ) if completed_submissions else 0.0
 
-    answer_rows = db.execute(
-        select(
-            SubmissionAnswer.question_id,
-            func.count(SubmissionAnswer.id).label("answer_count"),
-            func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).label("wrong_count"),
-            func.avg(SubmissionAnswer.spent_seconds).label("avg_spent_seconds"),
-        )
-        .where(SubmissionAnswer.exam_id == exam.id, SubmissionAnswer.is_correct.is_not(None))
-        .group_by(SubmissionAnswer.question_id)
-    ).all()
+    answer_rows = []
+    valid_submission_ids = [item.id for item in submissions]
+    if valid_submission_ids:
+        answer_rows = db.execute(
+            select(
+                SubmissionAnswer.question_id,
+                func.count(SubmissionAnswer.id).label("answer_count"),
+                func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).label("wrong_count"),
+                func.avg(SubmissionAnswer.spent_seconds).label("avg_spent_seconds"),
+            )
+            .where(
+                SubmissionAnswer.exam_id == exam.id,
+                SubmissionAnswer.submission_id.in_(valid_submission_ids),
+                SubmissionAnswer.is_correct.is_not(None),
+            )
+            .group_by(SubmissionAnswer.question_id)
+        ).all()
 
     question_insights: list[dict] = []
     total_answers = 0
@@ -1459,7 +1483,7 @@ def get_exam_insights(exam_id: int, current_user: User = Depends(require_role("t
     if top_wrong_questions and top_wrong_questions[0]["wrong_rate"] >= 0.6:
         easy_mistakes.append("头部错题错误率较高，可能存在知识点理解断层。")
         teaching_suggestions.append("建议围绕最高错题组织 10 分钟微讲解，并布置同类 2-3 题跟练。")
-    if avg_duration_minutes > float(exam.duration_minutes or 0) * 0.9 and submitted_submissions:
+    if avg_duration_minutes > float(exam.duration_minutes or 0) * 0.9 and completed_submissions:
         easy_mistakes.append("平均用时接近考试时长上限，存在时间分配压力。")
         teaching_suggestions.append("建议强化限时训练和先易后难策略，降低后程失分。")
     if not easy_mistakes:
@@ -1470,6 +1494,7 @@ def get_exam_insights(exam_id: int, current_user: User = Depends(require_role("t
         {
             "progress": {
                 "submitted_count": submitted_count,
+                "started_count": started_count,
                 "target_count": target_students,
                 "completion_rate": completion_rate,
             },

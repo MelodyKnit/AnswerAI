@@ -145,9 +145,11 @@ const isScheduleDirty = computed(() => {
 })
 
 const submittedCount = computed(() => Number(insights.value?.progress?.submitted_count || 0))
+const startedCount = computed(() => Number(insights.value?.progress?.started_count ?? submittedCount.value))
 const targetCount = computed(() => Number(insights.value?.progress?.target_count || 0))
 
 const progressText = computed(() => `${submittedCount.value}/${targetCount.value}`)
+const participantText = computed(() => `${startedCount.value}/${targetCount.value}`)
 
 const progressPercent = computed(() => {
   const ratio = Number(insights.value?.progress?.completion_rate || 0)
@@ -500,7 +502,7 @@ const handleSaveSchedule = async () => {
             <Users :size="16" class="kpi-icon users" />
             <span>参与人数</span>
           </div>
-          <p class="kpi-value">{{ progressText }}</p>
+          <p class="kpi-value">{{ participantText }}</p>
         </article>
       </section>
 

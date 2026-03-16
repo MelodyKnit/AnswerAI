@@ -449,30 +449,44 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
     """
     started_at = perf_counter()
     now = datetime.now(UTC)
+    completed_statuses = {"submitted", "completed", "reviewed"}
     _maybe_cleanup_invalid_study_artifacts_for_student(db, current_user.id, now)
     upcoming_count = db.scalar(
         select(func.count()).select_from(Exam)
         .join(ExamClass, ExamClass.exam_id == Exam.id)
         .join(ClassStudent, ClassStudent.class_id == ExamClass.class_id)
-        .outerjoin(ExamSubmission, (ExamSubmission.exam_id == Exam.id) & (ExamSubmission.student_id == current_user.id))
+        .outerjoin(
+            ExamSubmission,
+            (ExamSubmission.exam_id == Exam.id)
+            & (ExamSubmission.student_id == current_user.id)
+            & (ExamSubmission.teacher_id == Exam.created_by)
+            & (ExamSubmission.created_at >= Exam.created_at),
+        )
         .where(
-            ClassStudent.student_id == current_user.id, 
-            Exam.status.in_(['published', 'ongoing']),
-            Exam.start_time <= now,
+            ClassStudent.student_id == current_user.id,
+            ClassStudent.status == "active",
+            Exam.status.in_(["published", "ongoing"]),
             Exam.end_time >= now,
-            (ExamSubmission.id == None) | (ExamSubmission.status != 'submitted')
+            (ExamSubmission.id == None) | (ExamSubmission.status.notin_(completed_statuses)),
         )
     ) or 0
     recent_exams = db.scalars(
         select(Exam)
         .join(ExamClass, ExamClass.exam_id == Exam.id)
         .join(ClassStudent, ClassStudent.class_id == ExamClass.class_id)
-        .outerjoin(ExamSubmission, (ExamSubmission.exam_id == Exam.id) & (ExamSubmission.student_id == current_user.id))
+        .outerjoin(
+            ExamSubmission,
+            (ExamSubmission.exam_id == Exam.id)
+            & (ExamSubmission.student_id == current_user.id)
+            & (ExamSubmission.teacher_id == Exam.created_by)
+            & (ExamSubmission.created_at >= Exam.created_at),
+        )
         .where(
-            ClassStudent.student_id == current_user.id, 
-            Exam.status.in_(['published', 'ongoing']),
+            ClassStudent.student_id == current_user.id,
+            ClassStudent.status == "active",
+            Exam.status.in_(["published", "ongoing"]),
             Exam.end_time >= now,
-            (ExamSubmission.id == None) | (ExamSubmission.status != 'submitted')
+            (ExamSubmission.id == None) | (ExamSubmission.status.notin_(completed_statuses)),
         ).order_by(Exam.start_time.asc()).limit(5)
     ).all()
     latest_submission = db.scalar(select(ExamSubmission).where(ExamSubmission.student_id == current_user.id).order_by(ExamSubmission.created_at.desc()))
