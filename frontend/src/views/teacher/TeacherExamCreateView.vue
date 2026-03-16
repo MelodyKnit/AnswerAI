@@ -1,24 +1,26 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Play, Sparkles, Save } from 'lucide-vue-next'
-import { createExam, getClasses, getQuestions, publishExam } from '@/api/teacher'
-import { getSubjects } from '@/api/meta'
+import { assembleExamByAi, createExam, getClasses, getExams, getQuestionSubjects, getQuestions } from '@/api/teacher'
 
 const router = useRouter()
+const ALL_SUBJECT_VALUE = '__all__'
+const EXAM_CREATE_META_CACHE_KEY = 'teacher_exam_create_meta_v1'
 
 const form = ref({
   title: '',
   instructions: '',
-  subject: '',
+  subject: ALL_SUBJECT_VALUE,
   duration_minutes: 60,
   selected_class_id: undefined as number | undefined,
 })
 
-const subjects = ref<Array<{ id: number, name: string }>>([])
-const classes = ref<Array<{ id: number, name: string }>>([])
+const subjects = ref<string[]>([])
+const classes = ref<Array<{ id: number, name: string, subject?: string }>>([])
 const questionBank = ref<any[]>([])
 const examQuestions = ref<Array<{ question_id: number, stem: string, type: string, score: number, difficulty: number }>>([])
+const questionBankSubject = ref<string | null>(null)
 
 const isQuestionSelectorOpen = ref(false)
 const isAiAssembleOpen = ref(false)
@@ -29,11 +31,7 @@ const questionKeyword = ref('')
 const questionTypeFilter = ref('all')
 const tempSelectedQuestionIds = ref<number[]>([])
 
-const aiCount = ref(5)
-const aiType = ref('all')
-const aiDifficultyMin = ref(0)
-const aiDifficultyMax = ref(1)
-const aiKeyword = ref('')
+const aiRequirement = ref('')
 
 const isSubmitting = ref(false)
 const submitMode = ref<'draft' | 'publish' | null>(null)
@@ -51,18 +49,70 @@ const totalScore = computed(() => {
   return examQuestions.value.reduce((sum, item) => sum + Number(item.score || 0), 0)
 })
 
+const getActiveSubject = () => {
+  return form.value.subject && form.value.subject !== ALL_SUBJECT_VALUE ? form.value.subject : undefined
+}
+
+const syncSubjectSelection = (nextSubjects: string[]) => {
+  if (nextSubjects.length > 0) {
+    if (!nextSubjects.includes(form.value.subject)) {
+      form.value.subject = nextSubjects[0]
+    }
+    return
+  }
+
+  form.value.subject = ALL_SUBJECT_VALUE
+}
+
+const getSubjectsFromClasses = (items: Array<{ subject?: string }>) => {
+  return Array.from(new Set(items.map((item) => item.subject).filter((item): item is string => Boolean(item))))
+}
+
+const hydrateMetaCache = () => {
+  try {
+    const raw = localStorage.getItem(EXAM_CREATE_META_CACHE_KEY)
+    if (!raw) {
+      return
+    }
+
+    const parsed = JSON.parse(raw) as {
+      subjects?: string[]
+      classes?: Array<{ id: number, name: string, subject?: string }>
+    }
+    const cachedClasses = Array.isArray(parsed.classes) ? parsed.classes : []
+    const cachedSubjects = Array.isArray(parsed.subjects) ? parsed.subjects : getSubjectsFromClasses(cachedClasses)
+
+    if (cachedClasses.length > 0) {
+      classes.value = cachedClasses
+    }
+    if (cachedSubjects.length > 0) {
+      subjects.value = cachedSubjects
+      syncSubjectSelection(cachedSubjects)
+    }
+  } catch (error) {
+    console.warn('Failed to read exam creation metadata cache', error)
+  }
+}
+
+const persistMetaCache = () => {
+  try {
+    localStorage.setItem(EXAM_CREATE_META_CACHE_KEY, JSON.stringify({
+      subjects: subjects.value,
+      classes: classes.value,
+    }))
+  } catch (error) {
+    console.warn('Failed to cache exam creation metadata', error)
+  }
+}
+
 const filteredQuestionBank = computed(() => {
   const keyword = questionKeyword.value.trim().toLowerCase()
   return questionBank.value.filter((q) => {
     const keywordMatch = !keyword || String(q.stem || '').toLowerCase().includes(keyword)
     const typeMatch = questionTypeFilter.value === 'all' || q.type === questionTypeFilter.value
-    const subjectMatch = !form.value.subject || q.subject === form.value.subject
+    const subjectMatch = form.value.subject === ALL_SUBJECT_VALUE || q.subject === form.value.subject
     return keywordMatch && typeMatch && subjectMatch
   })
-})
-
-const selectedQuestionIdSet = computed(() => {
-  return new Set(examQuestions.value.map((item) => item.question_id))
 })
 
 const goBack = () => {
@@ -70,12 +120,16 @@ const goBack = () => {
 }
 
 const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
+  if (isSubmitting.value) {
+    return
+  }
+
   const title = form.value.title.trim()
   if (!title) {
     alert('请先填写考试名称')
     return
   }
-  if (!form.value.subject) {
+  if (!form.value.subject || form.value.subject === ALL_SUBJECT_VALUE) {
     alert('请先选择科目')
     return
   }
@@ -84,9 +138,31 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
     return
   }
 
+  if (mode === 'publish' && !form.value.selected_class_id) {
+    alert('创建并发布时必须选择一个关联班级')
+    return
+  }
+
+  if (mode === 'publish' && examQuestions.value.length === 0) {
+    alert('创建并发布前请至少添加一道试题')
+    return
+  }
+
+  submitMode.value = mode
+  isSubmitting.value = true
+
   try {
-    submitMode.value = mode
-    isSubmitting.value = true
+    const existed = await getExams({ keyword: title, page: 1, page_size: 100 })
+    const hasDuplicate = ((existed as any)?.items || []).some((item: any) => String(item?.title || '').trim() === title)
+    if (hasDuplicate) {
+      alert(`您已创建过同名考试「${title}」，请使用不同名称`)
+      return
+    }
+  } catch (error) {
+    console.error('Failed to precheck duplicate exam title', error)
+  }
+
+  try {
     const now = new Date()
     const end = new Date(now.getTime() + Number(form.value.duration_minutes || 60) * 60 * 1000)
 
@@ -97,6 +173,7 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
       start_time: now.toISOString(),
       end_time: end.toISOString(),
       instructions: form.value.instructions || null,
+      publish_now: mode === 'publish',
       allow_review: true,
       random_question_order: false,
       class_ids: form.value.selected_class_id ? [form.value.selected_class_id] : [],
@@ -111,9 +188,6 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
     const res = await createExam(payload)
     const examId = (res as any).exam?.id
     if (examId) {
-      if (mode === 'publish') {
-        await publishExam(examId)
-      }
       alert(mode === 'publish' ? '考试已创建并发布' : '考试草稿已保存')
       router.replace(`/app/teacher/exams/${examId}`)
     } else {
@@ -132,15 +206,37 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
 }
 
 const fetchMeta = async () => {
-  try {
-    const [subjectRes, classRes] = await Promise.all([getSubjects(), getClasses({ page_size: 100 })])
-    subjects.value = (subjectRes as any).items || []
-    classes.value = (classRes as any).items || []
-    if (!form.value.subject && subjects.value.length > 0) {
-      form.value.subject = subjects.value[0].name
-    }
-  } catch (error) {
-    console.error('Failed to load metadata for exam creation', error)
+  hydrateMetaCache()
+
+  const [subjectRes, classRes] = await Promise.allSettled([
+    getQuestionSubjects(),
+    getClasses({ page_size: 100 }),
+  ])
+
+  if (subjectRes.status === 'fulfilled') {
+    subjects.value = (((subjectRes.value as any)?.items || []) as string[]).filter(Boolean)
+  } else {
+    console.warn('Failed to load question subjects for exam creation', subjectRes.reason)
+  }
+
+  if (classRes.status === 'fulfilled') {
+    classes.value = ((classRes.value as any)?.items || []) as Array<{ id: number, name: string, subject?: string }>
+  } else {
+    console.warn('Failed to load classes for exam creation', classRes.reason)
+  }
+
+  if (subjects.value.length === 0 && classes.value.length > 0) {
+    subjects.value = getSubjectsFromClasses(classes.value)
+  }
+
+  syncSubjectSelection(subjects.value)
+
+  if (subjects.value.length > 0 || classes.value.length > 0) {
+    persistMetaCache()
+  }
+
+  if (subjectRes.status === 'rejected' && classRes.status === 'rejected' && subjects.value.length === 0 && classes.value.length === 0) {
+    console.error('Failed to load metadata for exam creation')
   }
 }
 
@@ -149,14 +245,20 @@ onMounted(() => {
 })
 
 const fetchQuestionBank = async () => {
+  const activeSubject = getActiveSubject() || null
+  if (questionBank.value.length > 0 && questionBankSubject.value === activeSubject) {
+    return
+  }
+
   try {
     isQuestionsLoading.value = true
     const res = await getQuestions({
       page: 1,
       page_size: 100,
-      subject: form.value.subject || undefined,
+      subject: activeSubject || undefined,
     })
     questionBank.value = (res as any).items || []
+    questionBankSubject.value = activeSubject
   } catch (error) {
     console.error('Failed to load question bank', error)
   } finally {
@@ -164,12 +266,10 @@ const fetchQuestionBank = async () => {
   }
 }
 
-const openQuestionSelector = async () => {
-  if (!questionBank.value.length) {
-    await fetchQuestionBank()
-  }
+const openQuestionSelector = () => {
   tempSelectedQuestionIds.value = examQuestions.value.map((item) => item.question_id)
   isQuestionSelectorOpen.value = true
+  void fetchQuestionBank()
 }
 
 const closeQuestionSelector = () => {
@@ -225,10 +325,7 @@ const removeExamQuestion = (questionId: number) => {
   examQuestions.value = examQuestions.value.filter((item) => item.question_id !== questionId)
 }
 
-const openAiAssemble = async () => {
-  if (!questionBank.value.length) {
-    await fetchQuestionBank()
-  }
+const openAiAssemble = () => {
   isAiAssembleOpen.value = true
 }
 
@@ -236,53 +333,60 @@ const closeAiAssemble = () => {
   isAiAssembleOpen.value = false
 }
 
-const shuffle = <T,>(arr: T[]): T[] => {
-  const copy = [...arr]
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[copy[i], copy[j]] = [copy[j], copy[i]]
-  }
-  return copy
-}
-
 const runAiAssemble = async () => {
-  if (!questionBank.value.length) {
-    await fetchQuestionBank()
+  const requirement = aiRequirement.value.trim()
+  if (!form.value.subject || form.value.subject === ALL_SUBJECT_VALUE) {
+    alert('请先选择具体科目，再使用 AI 智能组卷')
+    return
   }
-
-  const min = Math.max(0, Math.min(1, Number(aiDifficultyMin.value || 0)))
-  const max = Math.max(min, Math.min(1, Number(aiDifficultyMax.value || 1)))
-  const count = Math.max(1, Math.min(50, Number(aiCount.value || 1)))
-  const keyword = aiKeyword.value.trim().toLowerCase()
-  const existing = selectedQuestionIdSet.value
+  if (!requirement) {
+    alert('请先描述想要的试卷结构')
+    return
+  }
 
   try {
     isAiAssembling.value = true
-    const candidates = questionBank.value.filter((q) => {
-      if (existing.has(q.id)) return false
-      if (form.value.subject && q.subject !== form.value.subject) return false
-      if (aiType.value !== 'all' && q.type !== aiType.value) return false
-      const diff = Number(q.difficulty ?? 0.5)
-      if (diff < min || diff > max) return false
-      if (keyword && !String(q.stem || '').toLowerCase().includes(keyword)) return false
-      return true
+    const res = await assembleExamByAi({
+      subject: form.value.subject,
+      requirement,
+      exclude_question_ids: examQuestions.value.map((item) => item.question_id),
     })
 
-    if (!candidates.length) {
-      alert('未找到符合条件的题目，请放宽筛选条件')
+    const picked = (res as any)?.questions || []
+    if (!picked.length) {
+      const unmet = (res as any)?.unmet_requirements || []
+      if (unmet.length) {
+        alert('题库中没有足够匹配的题目，请调整描述后重试')
+        return
+      }
+      alert('未找到符合条件的题目，请换一种更明确的描述')
       return
     }
-
-    const picked = shuffle(candidates).slice(0, count)
     appendQuestionsToExam(picked)
+    if (!questionBank.value.length) {
+      questionBank.value = picked
+    } else {
+      const existingIds = new Set(questionBank.value.map((item) => item.id))
+      questionBank.value = [...questionBank.value, ...picked.filter((item: any) => !existingIds.has(item.id))]
+    }
+    alert((res as any)?.summary || `已加入 ${picked.length} 道题目`)
     closeAiAssemble()
   } catch (error) {
     console.error('AI assemble failed', error)
-    alert('智能组卷失败，请稍后重试')
+    const err = error as any
+    alert(err?.message || '智能组卷失败，请稍后重试')
   } finally {
     isAiAssembling.value = false
   }
 }
+
+watch(
+  () => form.value.subject,
+  () => {
+    questionBank.value = []
+    questionBankSubject.value = null
+  }
+)
 
 const getTypeLabel = (type: string) => {
   const hit = questionTypeOptions.find((item) => item.value === type)
@@ -312,7 +416,8 @@ const getTypeLabel = (type: string) => {
         <div class="form-group">
           <label>科目</label>
           <select v-model="form.subject" class="form-input">
-            <option v-for="subject in subjects" :key="subject.id" :value="subject.name">{{ subject.name }}</option>
+            <option :value="ALL_SUBJECT_VALUE">全部科目</option>
+            <option v-for="subject in subjects" :key="subject" :value="subject">{{ subject }}</option>
           </select>
         </div>
         <div class="form-group">
@@ -425,29 +530,21 @@ const getTypeLabel = (type: string) => {
             <ArrowLeft :size="18" />
           </button>
         </div>
-        <div class="dialog-grid">
-          <label class="form-group">
-            <span>题目数量</span>
-            <input v-model.number="aiCount" class="form-input" type="number" min="1" max="50" />
-          </label>
-          <label class="form-group">
-            <span>题型</span>
-            <select v-model="aiType" class="form-input">
-              <option v-for="option in questionTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </label>
-          <label class="form-group">
-            <span>难度下限</span>
-            <input v-model.number="aiDifficultyMin" class="form-input" type="number" min="0" max="1" step="0.1" />
-          </label>
-          <label class="form-group">
-            <span>难度上限</span>
-            <input v-model.number="aiDifficultyMax" class="form-input" type="number" min="0" max="1" step="0.1" />
-          </label>
+        <div class="dialog-grid ai-dialog-grid">
           <label class="form-group dialog-full">
-            <span>关键词（可选）</span>
-            <input v-model="aiKeyword" class="form-input" type="text" placeholder="例如：函数、阅读理解" />
+            <span>直接描述你想出的卷子</span>
+            <textarea
+              v-model="aiRequirement"
+              class="form-input ai-requirement-input"
+              rows="5"
+              placeholder="例如：我想出一份工程制图试卷，10道选择题加10道判断题，优先考察三视图、剖视图、尺寸标注。"
+            ></textarea>
           </label>
+          <div class="ai-hint-box dialog-full">
+            <span>你可以这样说：</span>
+            <p>10道工程制图选择题，加10道判断题，重点考三视图和剖视图。</p>
+            <p>我要一份函数基础卷，8道单选题，4道填空题，关键词是一次函数、图像。</p>
+          </div>
         </div>
         <div class="dialog-actions">
           <button class="button button--ghost" :disabled="isAiAssembling" @click="closeAiAssemble">取消</button>
@@ -784,6 +881,47 @@ const getTypeLabel = (type: string) => {
   gap: 12px;
 }
 
+.ai-dialog-grid {
+  gap: 10px;
+}
+
+.ai-requirement-input {
+  min-height: 132px;
+  resize: vertical;
+}
+
+.ai-requirement-input::placeholder {
+  color: color-mix(in srgb, var(--ink-soft) 72%, white 28%);
+  line-height: 1.55;
+}
+
+.ai-hint-box {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, white 18%);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--line) 18%, white 82%);
+}
+
+.ai-hint-box span {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--ink-soft) 82%, white 18%);
+}
+
+.ai-hint-box p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--ink-soft) 88%, white 12%);
+}
+
+.ai-hint-box p + p {
+  margin-top: 8px;
+}
+
 .dialog-full {
   grid-column: 1 / -1;
 }
@@ -814,6 +952,10 @@ const getTypeLabel = (type: string) => {
   .dialog-filters,
   .dialog-grid {
     grid-template-columns: 1fr;
+  }
+
+  .ai-hint-box {
+    padding: 10px 12px;
   }
 
   .question-side {

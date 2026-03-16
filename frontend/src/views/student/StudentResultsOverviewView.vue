@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, AlertTriangle, Zap } from 'lucide-vue-next'
 import http from '@/lib/http'
@@ -12,10 +12,26 @@ const resultData = ref<any>(null)
 const loading = ref(true)
 const errorMsg = ref('')
 
+const wrongQuestionIds = computed(() => {
+  const rows = resultData.value?.type_score_distribution || []
+  return rows
+    .filter((item: any) => Number(item?.score || 0) <= 0)
+    .map((item: any) => Number(item.question_id))
+    .filter((id: number) => Number.isFinite(id))
+})
+
+const canViewWrongQuestions = computed(() => wrongQuestionIds.value.length > 0)
+
+const handleViewWrongQuestions = () => {
+  if (!canViewWrongQuestions.value) return
+  const firstQuestionId = wrongQuestionIds.value[0]
+  router.push(`/app/student/results/${examId}/question/${firstQuestionId}`)
+}
+
 onMounted(async () => {
   try {
     const res = await http.get('/student/results/overview', { params: { exam_id: examId } })
-    resultData.value = res.data.data
+    resultData.value = res
   } catch (error: any) {
     errorMsg.value = error.response?.data?.message || '无法获取成绩信息'
   } finally {
@@ -92,7 +108,9 @@ onMounted(async () => {
 
       <!-- Action -->
       <div class="actions">
-        <button class="button button-large button-block">查看错题解析</button>
+        <button class="button button-large button-block" :disabled="!canViewWrongQuestions" @click="handleViewWrongQuestions">
+          {{ canViewWrongQuestions ? '查看错题解析' : '暂无错题可解析' }}
+        </button>
       </div>
     </div>
   </div>

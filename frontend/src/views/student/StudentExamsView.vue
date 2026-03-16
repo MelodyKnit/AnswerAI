@@ -12,19 +12,27 @@ interface Exam {
   status: string
   start_time: string
   end_time: string
+  submission_status?: string | null
+  has_submitted?: boolean
+  retake_request_status?: string | null
+  retake_request_created_at?: string | null
 }
 
 const exams = ref<Exam[]>([])
 const loading = ref(true)
-const activeTab = ref('upcoming') // 'upcoming', 'ongoing', 'finished'
+const activeTab = ref('all') // 'all', 'upcoming', 'ongoing', 'finished'
 
 const fetchExams = async () => {
   loading.value = true
   try {
+    const params: Record<string, unknown> = { page: 1, page_size: 20 }
+    if (activeTab.value !== 'all') {
+      params.status = activeTab.value
+    }
     const res = await http.get(`/student/exams`, {
-      params: { status: activeTab.value, page: 1, page_size: 20 }
+      params
     })
-    exams.value = res.data.data.items || []
+    exams.value = ((res as any)?.items || []) || []
   } catch (error) {
     console.error('Failed to fetch exams:', error)
   } finally {
@@ -41,8 +49,75 @@ const switchTab = (tab: string) => {
   fetchExams()
 }
 
+const canApplyRetake = (exam: Exam) => {
+  if (!canViewResult(exam)) return false
+  return !['pending', 'approved'].includes(String(exam.retake_request_status || ''))
+}
+
+const getRetakeStatusLabel = (exam: Exam) => {
+  const status = String(exam.retake_request_status || '')
+  if (status === 'pending') return '重考申请待审批'
+  if (status === 'approved') return '重考申请已通过'
+  if (status === 'rejected') return '重考申请被驳回'
+  if (status === 'consumed') return '已使用重考机会'
+  return ''
+}
+
+const submitRetakeRequest = async (exam: Exam) => {
+  try {
+    const reason = window.prompt('请输入重考申请理由（可选）', '希望再次尝试本场考试，查漏补缺。') || undefined
+    await http.post('/student/exams/retake-request', {
+      exam_id: Number(exam.id),
+      reason,
+    })
+    await fetchExams()
+    alert('重考申请已提交，等待教师审批。')
+  } catch (error: any) {
+    alert(error?.message || '申请失败，请稍后重试')
+  }
+}
+
+const parseServerTime = (value: string) => {
+  if (!value) return Number.NaN
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(value)
+  return new Date(hasTimezone ? value : `${value}Z`).getTime()
+}
+
+const getExamState = (exam: Exam) => {
+  if (canViewResult(exam)) return 'completed'
+  if (exam.status === 'finished') return 'finished'
+  if (exam.status === 'draft') return 'upcoming'
+  const now = Date.now()
+  const start = parseServerTime(exam.start_time)
+  const end = parseServerTime(exam.end_time)
+  if (Number.isNaN(start) || Number.isNaN(end)) return exam.status === 'published' ? 'ongoing' : 'upcoming'
+  if (now < start) return 'upcoming'
+  if (now > end) return 'finished'
+  return 'ongoing'
+}
+
+const canViewResult = (exam: Exam) => {
+  return Boolean(exam.has_submitted || ['submitted', 'reviewed'].includes(String(exam.submission_status || '')))
+}
+
+const getActionText = (exam: Exam) => {
+  const state = getExamState(exam)
+  if (state === 'upcoming') return '查看详情'
+  if (state === 'ongoing') return '进入考试'
+  return canViewResult(exam) ? '查看成绩' : '已截止'
+}
+
+const getExamStateLabel = (exam: Exam) => {
+  const state = getExamState(exam)
+  if (state === 'completed') return '已完成'
+  if (state === 'upcoming') return '未开始'
+  if (state === 'finished') return '已结束'
+  return '进行中'
+}
+
 const formatDate = (dateStr: string) => {
-  const d = new Date(dateStr)
+  const t = parseServerTime(dateStr)
+  const d = Number.isNaN(t) ? new Date(dateStr) : new Date(t)
   return `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 </script>
@@ -60,6 +135,11 @@ const formatDate = (dateStr: string) => {
 
     <!-- Tabs -->
     <div class="tabs">
+      <button
+        class="tab-item"
+        :class="{ active: activeTab === 'all' }"
+        @click="switchTab('all')"
+      >全部</button>
       <button 
         class="tab-item" 
         :class="{ active: activeTab === 'upcoming' }"
@@ -82,7 +162,7 @@ const formatDate = (dateStr: string) => {
       <div v-for="exam in exams" :key="exam.id" class="exam-card">
         <div class="exam-header">
           <h3>{{ exam.title }}</h3>
-          <span class="status-badge" :class="activeTab">{{ activeTab === 'upcoming' ? '未开始' : (activeTab === 'ongoing' ? '进行中' : '已结束') }}</span>
+          <span class="status-badge" :class="getExamState(exam)">{{ getExamStateLabel(exam) }}</span>
         </div>
         <div class="exam-body">
           <div class="meta-row">
@@ -99,12 +179,28 @@ const formatDate = (dateStr: string) => {
           </div>
         </div>
         <div class="exam-footer">
-          <RouterLink :to="`/app/student/exams/${exam.id}/prep`" class="button" v-if="activeTab !== 'finished'">
-            {{ activeTab === 'upcoming' ? '查看详情' : '进入考试' }}
+          <RouterLink :to="`/app/student/results/${exam.id}`" class="button button--outline" v-if="canViewResult(exam)">
+            {{ getActionText(exam) }}
           </RouterLink>
-          <RouterLink :to="`/app/student/results/${exam.id}`" class="button button--outline" v-else>
-            查看成绩
+          <RouterLink :to="`/app/student/exams/${exam.id}/prep`" class="button" v-else-if="getExamState(exam) !== 'finished'">
+            {{ getActionText(exam) }}
           </RouterLink>
+          <button class="button button--outline button--disabled" v-else disabled>
+            {{ getActionText(exam) }}
+          </button>
+        </div>
+        <div v-if="canViewResult(exam)" class="retake-row">
+          <span v-if="getRetakeStatusLabel(exam)" class="retake-status">{{ getRetakeStatusLabel(exam) }}</span>
+          <button
+            v-if="canApplyRetake(exam)"
+            class="retake-btn"
+            @click="submitRetakeRequest(exam)"
+          >申请重考</button>
+          <RouterLink
+            v-else-if="exam.retake_request_status === 'approved'"
+            :to="`/app/student/exams/${exam.id}/prep`"
+            class="retake-btn retake-btn--approved"
+          >进入重考</RouterLink>
         </div>
       </div>
     </div>
@@ -244,6 +340,11 @@ const formatDate = (dateStr: string) => {
   color: #64748b;
 }
 
+.status-badge.completed {
+  background: #ecfdf5;
+  color: #047857;
+}
+
 .exam-body {
   display: flex;
   flex-direction: column;
@@ -286,6 +387,34 @@ const formatDate = (dateStr: string) => {
   margin-top: 4px;
 }
 
+.retake-row {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.retake-status {
+  font-size: 12px;
+  color: #475569;
+}
+
+.retake-btn {
+  border: 1px solid #0f766e;
+  background: #ecfdf5;
+  color: #065f46;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.retake-btn--approved {
+  background: #0f766e;
+  color: #fff;
+}
+
 .button {
   padding: 10px 24px;
   font-size: 14px;
@@ -301,6 +430,12 @@ const formatDate = (dateStr: string) => {
 .button--outline:hover {
   background: var(--bg);
   transform: translateY(-1px);
+}
+
+.button--disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .empty-state, .loading-state {

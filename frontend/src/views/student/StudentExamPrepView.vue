@@ -12,11 +12,13 @@ const exam = ref<any>(null)
 const loading = ref(true)
 const starting = ref(false)
 const errorMsg = ref('')
+const canStart = ref(false)
 
 onMounted(async () => {
   try {
     const res = await http.get('/student/exams/detail', { params: { exam_id: examId } })
-    exam.value = res.data.data
+    exam.value = (res as any)?.exam || res
+    canStart.value = Boolean((res as any)?.can_start)
   } catch (error: any) {
     errorMsg.value = error.response?.data?.message || '无法获取考试信息'
   } finally {
@@ -25,11 +27,15 @@ onMounted(async () => {
 })
 
 const startExam = async () => {
+  if (!canStart.value) {
+    errorMsg.value = '当前不在考试开放时间内，暂不能开始。'
+    return
+  }
   starting.value = true
   errorMsg.value = ''
   try {
     const res = await http.post('/student/exams/start', { exam_id: examId })
-    const sessionId = res.data.data.submission.id
+    const sessionId = (res as any)?.submission?.id
     router.push(`/app/student/exams/${examId}/session/${sessionId}`)
   } catch (error: any) {
     errorMsg.value = error.response?.data?.message || '无法开始考试，请稍后重试'
@@ -93,10 +99,11 @@ const startExam = async () => {
       </div>
 
       <div class="bottom-action">
+        <p v-if="!canStart" class="start-hint">当前不在考试开放时间，暂不可开始。</p>
         <button 
           class="button button-large" 
           @click="startExam" 
-          :disabled="starting"
+          :disabled="starting || !canStart"
         >
           {{ starting ? '准备中...' : '开始考试' }}
         </button>
@@ -109,11 +116,14 @@ const startExam = async () => {
 .view-exam-prep {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  min-height: 100dvh;
+  height: auto;
   background: var(--bg);
-  padding: 16px;
-  max-width: 480px;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  width: min(100%, 480px);
   margin: 0 auto;
+  box-sizing: border-box;
+  overflow-y: auto;
 }
 
 .top-nav {
@@ -140,7 +150,8 @@ const startExam = async () => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 18px;
+  min-height: 0;
 }
 
 .exam-title {
@@ -210,8 +221,15 @@ const startExam = async () => {
 }
 
 .bottom-action {
-  margin-top: auto;
-  padding-bottom: 32px;
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.start-hint {
+  margin: 0 0 10px;
+  text-align: center;
+  color: #b45309;
+  font-size: 13px;
 }
 
 .button-large {
@@ -232,5 +250,21 @@ const startExam = async () => {
 .error-icon {
   color: #ef4444;
   margin-bottom: 16px;
+}
+
+@media (max-width: 420px) {
+  .view-exam-prep {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .exam-title {
+    font-size: 21px;
+  }
+
+  .info-item {
+    padding: 14px;
+    gap: 12px;
+  }
 }
 </style>

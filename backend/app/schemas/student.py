@@ -48,3 +48,25 @@ class SubmitExamRequest(BaseModel):
     exam_id: int
     submission_id: int
     confirm_submit: bool
+
+
+class StudyTaskActionRequest(BaseModel):
+    task_id: int
+    action: str
+    feedback: str | None = None
+
+
+class FollowUpMessage(BaseModel):
+    role: str
+    content: str
+
+
+class StudentAIFollowUpRequest(BaseModel):
+    exam_id: int
+    question_id: int
+    messages: list[FollowUpMessage]
+
+
+class StudentRetakeRequestCreate(BaseModel):
+    exam_id: int
+    reason: str | None = None

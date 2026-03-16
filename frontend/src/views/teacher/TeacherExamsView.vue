@@ -1,14 +1,32 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus, Search, FileText, ChevronRight } from 'lucide-vue-next'
-import { getExams } from '@/api/teacher'
+import { Plus, Search, FileText, ChevronRight, Trash2 } from 'lucide-vue-next'
+import { deleteExam, getExams } from '@/api/teacher'
 
 const router = useRouter()
 const exams = ref<any[]>([])
 const isLoading = ref(true)
 const filterStatus = ref('all') // all, draft, published, finished
 const keyword = ref('')
+
+const parseServerTime = (value: string) => {
+  if (!value) return Number.NaN
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(value)
+  return new Date(hasTimezone ? value : `${value}Z`).getTime()
+}
+
+const getEffectiveStatus = (exam: any): 'draft' | 'published' | 'finished' | 'expired' => {
+  const status = String(exam?.status || '')
+  if (status === 'draft') return 'draft'
+  if (status === 'finished') return 'finished'
+  if (status === 'published') {
+    const end = parseServerTime(String(exam?.end_time || ''))
+    if (!Number.isNaN(end) && Date.now() > end) return 'expired'
+    return 'published'
+  }
+  return 'draft'
+}
 
 const fetchExams = async () => {
   try {
@@ -37,21 +55,50 @@ const goDetail = (id: number) => {
   router.push(`/app/teacher/exams/${id}`)
 }
 
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case 'draft': return 'var(--ink-soft)'
-    case 'published': return 'var(--success, #10b981)'
-    case 'finished': return 'var(--ink-soft)'
-    default: return 'var(--ink)'
+const canDelete = (exam: any) => getEffectiveStatus(exam) === 'finished'
+
+const handleDelete = async (exam: any) => {
+  if (!canDelete(exam)) return
+  const confirmed = window.confirm(`确认删除考试「${exam.title}」吗？此操作不可恢复。`)
+  if (!confirmed) return
+  try {
+    await deleteExam(Number(exam.id))
+    await fetchExams()
+  } catch (error: any) {
+    const detail = error?.response?.data?.detail
+    alert(typeof detail === 'string' ? detail : '删除失败，请稍后重试')
   }
 }
 
-const getStatusText = (status: string) => {
+const getStatusColor = (exam: any) => {
+  const status = getEffectiveStatus(exam)
   switch (status) {
-    case 'draft': return '草稿'
-    case 'published': return '进行中'
-    case 'finished': return '已结束'
-    default: return status
+    case 'draft':
+      return 'var(--ink-soft)'
+    case 'published':
+      return 'var(--success, #10b981)'
+    case 'finished':
+      return 'var(--ink-soft)'
+    case 'expired':
+      return '#b45309'
+    default:
+      return 'var(--ink)'
+  }
+}
+
+const getStatusText = (exam: any) => {
+  const status = getEffectiveStatus(exam)
+  switch (status) {
+    case 'draft':
+      return '草稿'
+    case 'published':
+      return '进行中'
+    case 'finished':
+      return '已结束'
+    case 'expired':
+      return '已超时(待结束)'
+    default:
+      return String(exam?.status || '未知')
   }
 }
 </script>
@@ -108,11 +155,21 @@ const getStatusText = (status: string) => {
           </div>
         </div>
         <div class="card-side">
+          <button
+            class="delete-button"
+            :class="{ 'delete-button--disabled': !canDelete(exam) }"
+            :disabled="!canDelete(exam)"
+            @click.stop="handleDelete(exam)"
+            :title="canDelete(exam) ? '删除考试' : '仅已结束考试可删除'"
+            aria-label="删除考试"
+          >
+            <Trash2 :size="15" />
+          </button>
           <span 
             class="status-badge" 
-            :style="{ color: getStatusColor(exam.status) }"
+            :style="{ color: getStatusColor(exam) }"
           >
-            {{ getStatusText(exam.status) }}
+            {{ getStatusText(exam) }}
           </span>
           <ChevronRight :size="18" class="icon-right" />
         </div>
@@ -237,7 +294,33 @@ const getStatusText = (status: string) => {
 .card-side {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+}
+
+.delete-button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  background: #fff1f2;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.delete-button:hover {
+  background: #ffe4e6;
+}
+
+.delete-button--disabled,
+.delete-button:disabled {
+  border-color: var(--line);
+  color: var(--ink-soft);
+  background: #f8fafc;
+  cursor: not-allowed;
 }
 
 .status-badge {

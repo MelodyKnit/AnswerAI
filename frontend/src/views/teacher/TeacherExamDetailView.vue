@@ -19,7 +19,7 @@ import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
-import { finishExam, getExamDetail, getExamInsights, pauseExam, publishExam } from '@/api/teacher'
+import { finishExam, getClasses, getExamDetail, getExamInsights, pauseExam, publishExam, updateExam } from '@/api/teacher'
 
 use([CanvasRenderer, LineChart, PieChart, BarChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -30,11 +30,54 @@ const examId = Number(route.params.id)
 const exam = ref<any>(null)
 const insights = ref<any>(null)
 const isLoading = ref(true)
+const actionLoading = ref(false)
+const actionError = ref('')
+const classBindingLoading = ref(false)
+const allClasses = ref<Array<{ id: number, name: string }>>([])
+const selectedClassIds = ref<number[]>([])
+
+const boundClassCount = computed(() => {
+  return Array.isArray(exam.value?.class_ids) ? exam.value.class_ids.length : 0
+})
+
+const canPublishExam = computed(() => {
+  if (!exam.value) return false
+  if (exam.value.status !== 'draft') return false
+  if (boundClassCount.value <= 0) return false
+  if (Number(exam.value?.question_count || 0) <= 0) return false
+  return true
+})
+
+const publishBlockedReason = computed(() => {
+  if (!exam.value || exam.value.status !== 'draft') return ''
+  if (boundClassCount.value <= 0) return '请先为考试绑定至少一个班级后再发布。'
+  if (Number(exam.value?.question_count || 0) <= 0) return '请先添加至少一道试题后再发布。'
+  return ''
+})
+
+const parseServerTime = (value: string) => {
+  if (!value) return Number.NaN
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(value)
+  return new Date(hasTimezone ? value : `${value}Z`).getTime()
+}
+
+const effectiveStatus = computed(() => {
+  if (!exam.value) return 'draft'
+  const status = String(exam.value.status || '')
+  if (status === 'draft' || status === 'finished') return status
+  if (status === 'published') {
+    const end = parseServerTime(String(exam.value.end_time || ''))
+    if (!Number.isNaN(end) && Date.now() > end) return 'expired'
+    return 'published'
+  }
+  return 'draft'
+})
 
 const statusText = computed(() => {
   if (!exam.value) return ''
-  if (exam.value.status === 'draft') return '草稿'
-  if (exam.value.status === 'published') return '进行中'
+  if (effectiveStatus.value === 'draft') return '草稿'
+  if (effectiveStatus.value === 'published') return '进行中'
+  if (effectiveStatus.value === 'expired') return '已超时(待结束)'
   return '已结束'
 })
 
@@ -58,6 +101,20 @@ const overallWrongRate = computed(() => {
 const topWrongQuestions = computed(() => (insights.value?.top_wrong_questions || []) as Array<any>)
 const aiEasyMistakes = computed(() => (insights.value?.ai_summary?.easy_mistakes || []) as string[])
 const aiSuggestions = computed(() => (insights.value?.ai_summary?.teaching_suggestions || []) as string[])
+
+const getQuestionAxisLabel = (item: any, index: number) => {
+  const orderNo = Number(item?.order_no)
+  if (Number.isFinite(orderNo) && orderNo > 0) {
+    return `第${orderNo}题`
+  }
+  return `第${index + 1}题`
+}
+
+const getQuestionShortStem = (stem: string) => {
+  const text = String(stem || '').replace(/\s+/g, ' ').trim()
+  if (!text) return '题干暂不可用'
+  return text.length > 22 ? `${text.slice(0, 22)}...` : text
+}
 
 const completionPieOption = computed(() => {
   const submitted = submittedCount.value
@@ -83,13 +140,21 @@ const completionPieOption = computed(() => {
 
 const wrongRateBarOption = computed(() => {
   const items = topWrongQuestions.value.slice(0, 6)
-  const labels = items.map((_, idx) => `Q${idx + 1}`)
+  const labels = items.map((item, idx) => getQuestionAxisLabel(item, idx))
   const values = items.map((q) => Math.round(Number(q.wrong_rate || 0) * 100))
   return {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      valueFormatter: (v: number) => `${v}%`,
+      formatter: (params: any[]) => {
+        const first = params?.[0]
+        const idx = Number(first?.dataIndex ?? -1)
+        const q = idx >= 0 ? items[idx] : null
+        const title = idx >= 0 ? getQuestionAxisLabel(q, idx) : '题目'
+        const stem = q ? getQuestionShortStem(String(q.stem || '')) : ''
+        const value = Number(first?.value ?? 0)
+        return `${title}<br/>${stem}<br/>错误率 ${value}%`
+      },
     },
     grid: { left: 30, right: 16, top: 14, bottom: 26 },
     xAxis: {
@@ -119,12 +184,20 @@ const wrongRateBarOption = computed(() => {
 
 const trendLineOption = computed(() => {
   const items = topWrongQuestions.value.slice(0, 6)
-  const labels = items.map((_, idx) => `高错题${idx + 1}`)
+  const labels = items.map((item, idx) => getQuestionAxisLabel(item, idx))
   const values = items.map((q) => Math.round(Number(q.wrong_rate || 0) * 100))
   return {
     tooltip: {
       trigger: 'axis',
-      valueFormatter: (v: number) => `${v}%`,
+      formatter: (params: any[]) => {
+        const first = params?.[0]
+        const idx = Number(first?.dataIndex ?? -1)
+        const q = idx >= 0 ? items[idx] : null
+        const title = idx >= 0 ? getQuestionAxisLabel(q, idx) : '题目'
+        const stem = q ? getQuestionShortStem(String(q.stem || '')) : ''
+        const value = Number(first?.value ?? 0)
+        return `${title}<br/>${stem}<br/>错误率 ${value}%`
+      },
     },
     grid: { left: 24, right: 16, top: 14, bottom: 24 },
     xAxis: {
@@ -174,6 +247,8 @@ const fetchExam = async () => {
     const [detailRes, insightRes] = await Promise.all([getExamDetail(examId), getExamInsights(examId)])
     exam.value = (detailRes as any).exam
     exam.value.question_items = (detailRes as any).question_items || []
+    exam.value.class_ids = (detailRes as any).classes?.map((item: any) => item.id) || []
+    selectedClassIds.value = [...exam.value.class_ids]
     insights.value = insightRes
   } catch (error) {
     console.error('Failed to fetch exam', error)
@@ -182,25 +257,81 @@ const fetchExam = async () => {
   }
 }
 
+const fetchClasses = async () => {
+  try {
+    const res = await getClasses({ page: 1, page_size: 100 })
+    allClasses.value = ((res as any)?.items || []).map((item: any) => ({ id: Number(item.id), name: String(item.name || '未命名班级') }))
+  } catch (error) {
+    console.error('Failed to fetch classes', error)
+    actionError.value = '班级列表加载失败，请稍后重试'
+  }
+}
+
 onMounted(() => {
   fetchExam()
+  fetchClasses()
 })
 
 const goBack = () => router.back()
 
 const handlePublish = async () => {
-  await publishExam(examId)
-  await fetchExam()
+  if (!canPublishExam.value) {
+    actionError.value = publishBlockedReason.value || '当前条件不满足，无法发布考试'
+    return
+  }
+  if (actionLoading.value) return
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    await publishExam(examId)
+    await fetchExam()
+  } catch (error: any) {
+    actionError.value = error?.message || '发布考试失败，请稍后重试'
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 const handlePause = async () => {
-  await pauseExam(examId)
-  await fetchExam()
+  if (actionLoading.value) return
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    await pauseExam(examId)
+    await fetchExam()
+  } catch (error: any) {
+    actionError.value = error?.message || '暂停考试失败，请稍后重试'
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 const handleFinish = async () => {
-  await finishExam(examId)
-  await fetchExam()
+  if (actionLoading.value) return
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    await finishExam(examId)
+    await fetchExam()
+  } catch (error: any) {
+    actionError.value = error?.message || '结束考试失败，请稍后重试'
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+const handleSaveClassBinding = async () => {
+  if (!exam.value || classBindingLoading.value) return
+  classBindingLoading.value = true
+  actionError.value = ''
+  try {
+    await updateExam({ exam_id: examId, class_ids: selectedClassIds.value })
+    await fetchExam()
+  } catch (error: any) {
+    actionError.value = error?.message || '保存班级绑定失败，请稍后重试'
+  } finally {
+    classBindingLoading.value = false
+  }
 }
 </script>
 
@@ -210,7 +341,7 @@ const handleFinish = async () => {
       <button class="icon-button" @click="goBack" aria-label="返回">
         <ArrowLeft :size="20" />
       </button>
-      <div v-if="exam" class="status-pill" :class="`status--${exam.status}`">{{ statusText }}</div>
+      <div v-if="exam" class="status-pill" :class="`status--${effectiveStatus}`">{{ statusText }}</div>
     </header>
 
     <div v-if="isLoading" class="loading-state">加载中...</div>
@@ -332,22 +463,59 @@ const handleFinish = async () => {
       </section>
 
       <section class="action-toolbar">
-        <button class="action-btn action-primary" v-if="exam.status === 'draft'" @click="handlePublish">
+        <button
+          class="action-btn action-primary"
+          :disabled="actionLoading || !canPublishExam"
+          :title="publishBlockedReason || '发布考试'"
+          v-if="exam.status === 'draft'"
+          @click="handlePublish"
+        >
           <Play :size="16" />
           发布考试
         </button>
-        <button class="action-btn action-warn" v-if="exam.status === 'published'" @click="handlePause">
+        <button class="action-btn action-warn" :disabled="actionLoading" v-if="exam.status === 'published'" @click="handlePause">
           <Pause :size="16" />
           暂停考试
         </button>
-        <button class="action-btn action-danger" v-if="exam.status === 'published'" @click="handleFinish">
+        <button class="action-btn action-danger" :disabled="actionLoading" v-if="effectiveStatus === 'published' || effectiveStatus === 'expired'" @click="handleFinish">
           <Square :size="16" />
-          结束考试
+          {{ effectiveStatus === 'expired' ? '结束并归档' : '结束考试' }}
         </button>
-        <button class="action-btn" v-if="exam.status === 'finished'">
+        <button class="action-btn" v-if="effectiveStatus === 'finished'">
           <CheckCircle :size="16" />
           进入阅卷
         </button>
+      </section>
+
+      <p v-if="exam.status === 'draft'" class="action-hint">
+        当前已绑定班级：{{ boundClassCount }} 个，试题数：{{ exam.question_count || 0 }} 题
+      </p>
+
+      <p v-if="effectiveStatus === 'expired'" class="action-hint action-hint--warning">
+        该考试已超过截止时间，但状态尚未归档，请点击“结束并归档”后再进行删除等操作。
+      </p>
+
+      <p v-if="actionError" class="action-error">{{ actionError }}</p>
+
+      <section class="class-bind-panel">
+        <div class="panel-title-row class-bind-header">
+          <h2>发布班级设置</h2>
+          <span class="q-count">已选 {{ selectedClassIds.length }} 个</span>
+        </div>
+        <p class="class-bind-tip">请勾选本场测验要发布到的班级，保存后再发布考试。</p>
+        <div class="class-bind-list" v-if="allClasses.length">
+          <label v-for="item in allClasses" :key="item.id" class="class-bind-item">
+            <input type="checkbox" :value="item.id" v-model="selectedClassIds" :disabled="classBindingLoading" />
+            <span>{{ item.name }}</span>
+          </label>
+        </div>
+        <div class="empty-state" v-else>暂无可绑定班级，请先在班级管理中创建班级。</div>
+        <div class="class-bind-actions">
+          <button class="action-btn" :disabled="classBindingLoading" @click="selectedClassIds = [...(exam?.class_ids || [])]">重置</button>
+          <button class="action-btn action-primary" :disabled="classBindingLoading" @click="handleSaveClassBinding">
+            {{ classBindingLoading ? '保存中...' : '保存班级绑定' }}
+          </button>
+        </div>
       </section>
 
       <section class="questions-panel">
@@ -373,9 +541,11 @@ const handleFinish = async () => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  margin: -24px -16px 0;
+  padding: calc(10px + 24px) 16px calc(18px + env(safe-area-inset-bottom));
+  min-height: 100dvh;
   background:
-    radial-gradient(circle at 85% -20%, rgba(29, 78, 216, 0.14), transparent 35%),
-    radial-gradient(circle at 0% 30%, rgba(15, 118, 110, 0.1), transparent 38%);
+    linear-gradient(180deg, #eef3f8 0%, #edf2f7 58%, #ebf0f6 100%);
 }
 
 .page-header {
@@ -413,6 +583,12 @@ const handleFinish = async () => {
 .status--finished {
   color: #334155;
   background: rgba(148, 163, 184, 0.12);
+}
+
+.status--expired {
+  color: #b45309;
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
 }
 
 .loading-state,
@@ -562,6 +738,10 @@ const handleFinish = async () => {
   margin: 0;
   font-size: 14px;
   font-weight: 700;
+}
+
+.chart-title-row h2 + .chip {
+  letter-spacing: 0.01em;
 }
 
 .chip {
@@ -721,6 +901,71 @@ const handleFinish = async () => {
   font-weight: 600;
 }
 
+.action-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.action-error {
+  margin: -2px 0 0;
+  font-size: 12px;
+  color: #b91c1c;
+}
+
+.action-hint {
+  margin: -2px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.action-hint--warning {
+  color: #b45309;
+}
+
+.class-bind-panel {
+  border: 1px solid #e4eaf2;
+  border-radius: 14px;
+  background: #fff;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.class-bind-header {
+  margin-bottom: 0;
+}
+
+.class-bind-tip {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.class-bind-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.class-bind-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #edf1f6;
+  border-radius: 10px;
+  padding: 8px;
+  font-size: 13px;
+  color: #0f172a;
+  background: #fbfdff;
+}
+
+.class-bind-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .action-primary {
   border-color: #0f766e;
   color: #0f766e;
@@ -801,6 +1046,10 @@ const handleFinish = async () => {
 }
 
 @media (max-width: 768px) {
+  .exam-detail-dashboard {
+    padding-top: 8px;
+  }
+
   .hero-card {
     grid-template-columns: 1fr;
   }
@@ -824,6 +1073,17 @@ const handleFinish = async () => {
 
   .ai-columns {
     grid-template-columns: 1fr;
+  }
+
+  .class-bind-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (min-width: 768px) {
+  .exam-detail-dashboard {
+    margin: -40px -32px 0;
+    padding: calc(12px + 40px) 32px calc(24px + env(safe-area-inset-bottom));
   }
 }
 </style>

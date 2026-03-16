@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
-import { Users, FileText, CheckCircle, Clock, Database, Edit, ListTodo } from 'lucide-vue-next'
+import { Users, FileText, CheckCircle, Clock, Database, Edit, ListTodo, RotateCcw } from 'lucide-vue-next'
 import { getExams, getTeacherDashboardOverview } from '@/api/teacher'
 
 const authStore = useAuthStore()
@@ -19,10 +19,12 @@ const quickActions = [
   { label: '题库管理', icon: Database, route: '/app/teacher/questions', color: '#3b82f6' },
   { label: '考试管理', icon: Edit, route: '/app/teacher/exams', color: '#10b981' },
   { label: '阅卷任务', icon: ListTodo, route: '/app/teacher/review', color: '#f59e0b' },
+  { label: '重考审批', icon: RotateCcw, route: '/app/teacher/retake-requests', color: '#0f766e' },
   { label: '学情分析', icon: CheckCircle, route: '/app/teacher/analytics', color: '#8b5cf6' }
 ]
 
 const recentExams = ref<any[]>([])
+const riskStudents = ref<any[]>([])
 
 const navigate = (path: string) => {
   router.push(path)
@@ -37,6 +39,7 @@ const fetchData = async () => {
 
     const overview = overviewRes as any
     recentExams.value = (examsRes as any).items || []
+    riskStudents.value = Array.isArray(overview.risk_students) ? overview.risk_students : []
 
     const trend = Array.isArray(overview.avg_score_trend) ? overview.avg_score_trend : []
     const avgScore = trend.length > 0
@@ -111,6 +114,51 @@ onMounted(() => {
         </div>
       </div>
     </section>
+
+    <section class="section-block">
+      <div class="section-title title-with-action">
+        <h2>风险学生洞察</h2>
+        <button class="button button--small button--ghost" @click="navigate('/app/teacher/analytics')">查看班级分析</button>
+      </div>
+
+      <div v-if="riskStudents.length" class="risk-list">
+        <article v-for="student in riskStudents" :key="`risk-${student.student_id}-${student.exam_id}`" class="risk-card">
+          <div class="risk-head">
+            <div>
+              <h3>{{ student.student_name }}</h3>
+              <p>
+                {{ student.class_name || '未分配班级' }}
+                <span v-if="student.exam_title"> · 最近考试《{{ student.exam_title }}》</span>
+              </p>
+            </div>
+            <span class="risk-pill" :class="student.risk_level === 'high' ? 'high' : student.risk_level === 'medium' ? 'mid' : 'low'">
+              {{ student.risk_level === 'high' ? '高风险' : student.risk_level === 'medium' ? '中风险' : '关注中' }}
+            </span>
+          </div>
+
+          <div class="risk-metrics">
+            <span>最近得分 {{ Number(student.latest_score || 0).toFixed(1) }}</span>
+            <span>正确率 {{ Math.round(Number(student.correct_rate || 0) * 100) }}%</span>
+          </div>
+
+          <div class="risk-tags" v-if="student.weak_abilities?.length">
+            <span v-for="ability in student.weak_abilities" :key="`${student.student_id}-${ability}`" class="ability-tag">{{ ability }}</span>
+          </div>
+
+          <p v-if="student.weak_knowledge_points?.length" class="risk-text">
+            薄弱知识点：{{ student.weak_knowledge_points.join('、') }}
+          </p>
+
+          <ul class="risk-suggestions" v-if="student.coaching_suggestions?.length">
+            <li v-for="(tip, idx) in student.coaching_suggestions" :key="`${student.student_id}-tip-${idx}`">{{ tip }}</li>
+          </ul>
+        </article>
+      </div>
+
+      <div v-else class="empty-risk">
+        当前未识别到明显风险学生，建议继续跟踪下一次测验数据。
+      </div>
+    </section>
   </div>
 </template>
 
@@ -132,6 +180,7 @@ onMounted(() => {
 .metric-value { font-size: 24px; font-weight: 600; color: var(--ink); letter-spacing: -0.02em; }
 .section-block { display: flex; flex-direction: column; gap: 16px; }
 .section-title h2 { font-size: 16px; font-weight: 600; color: var(--ink); }
+.title-with-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .list-container { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-md); background: #fff; }
 .list-item { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--line); gap: 16px; }
 .list-item:last-child { border-bottom: none; }
@@ -144,6 +193,72 @@ onMounted(() => {
 .status-indicator { font-size: 12px; color: var(--ink-soft); }
 .status--active { color: var(--accent); font-weight: 500; }
 .button--small { padding: 4px 12px; font-size: 13px; min-width: 68px; }
+
+.risk-list { display: grid; gap: 10px; }
+
+.risk-card {
+  border: 1px solid #dfe8f3;
+  border-radius: 14px;
+  background: #fff;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.risk-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+
+.risk-head h3 { margin: 0; font-size: 15px; color: #0f172a; }
+
+.risk-head p { margin: 4px 0 0; font-size: 12px; color: #64748b; }
+
+.risk-pill {
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 600;
+}
+
+.risk-pill.high { color: #b91c1c; background: #fef2f2; border-color: #fecaca; }
+.risk-pill.mid { color: #b45309; background: #fffbeb; border-color: #fde68a; }
+.risk-pill.low { color: #0369a1; background: #f0f9ff; border-color: #bae6fd; }
+
+.risk-metrics { display: flex; gap: 14px; font-size: 12px; color: #475569; }
+
+.risk-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.ability-tag {
+  font-size: 11px;
+  color: #0f766e;
+  border: 1px solid #bde8df;
+  background: #f0fdfa;
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.risk-text { margin: 0; font-size: 12px; color: #475569; }
+
+.risk-suggestions {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.empty-risk {
+  border: 1px dashed #d7e1ee;
+  border-radius: 12px;
+  background: #f8fbff;
+  color: #64748b;
+  font-size: 13px;
+  text-align: center;
+  padding: 14px;
+}
 </style>
 
 

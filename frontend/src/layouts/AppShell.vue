@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
-import { Bell, ArrowLeft, GraduationCap, LayoutDashboard, History, Settings } from 'lucide-vue-next'
+import { House, ArrowLeft, GraduationCap, LayoutDashboard, Settings, Target, TrendingUp, User } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -12,10 +12,17 @@ const isTeacher = computed(() => route.meta.section === 'teacher')
 // Dynamic Topbar logic
 const canGoBack = computed(() => window.history.state.back != null && route.path !== '/app/student/dashboard' && route.path !== '/app/teacher/dashboard')
 const pageTitle = computed(() => route.meta.title || 'AI Answer')
+const homeRoute = computed(() => (isTeacher.value ? '/app/teacher/dashboard' : '/app/student/dashboard'))
 
 const handleBack = () => {
   if (canGoBack.value) {
     router.back()
+  }
+}
+
+const goHome = () => {
+  if (route.path !== homeRoute.value) {
+    router.push(homeRoute.value)
   }
 }
 
@@ -30,8 +37,9 @@ const navItems = computed(() => {
   }
   return [
     { label: '学习中心', icon: LayoutDashboard, to: '/app/student/dashboard' },
-    { label: '复习', icon: History, to: '/app/student/history' },
-    { label: '我的', icon: Settings, to: '/app/student/profile' }
+    { label: '复习', icon: Target, to: '/app/student/study-plan' },
+    { label: '成长', icon: TrendingUp, to: '/app/student/growth' },
+    { label: '档案', icon: User, to: '/app/student/profile' }
   ]
 })
 </script>
@@ -51,8 +59,8 @@ const navItems = computed(() => {
       </div>
 
       <div class="header-right">
-        <button class="icon-btn" aria-label="Notifications">
-          <Bell :size="20" />
+        <button class="icon-btn" aria-label="返回首页" @click="goHome">
+          <House :size="20" />
         </button>
       </div>
     </header>
@@ -192,3 +200,5 @@ const navItems = computed(() => {
   }
 }
 </style>
+
+

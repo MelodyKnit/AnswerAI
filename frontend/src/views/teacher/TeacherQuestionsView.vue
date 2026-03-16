@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { Database, Filter, ImagePlus, Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-vue-next'
-import { createQuestion, deleteQuestion, generateQuestionsByAi, getQuestions, updateQuestion } from '@/api/teacher'
-import { getQuestionTypes, getSubjects } from '@/api/meta'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { Database, Eye, Filter, ImagePlus, Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-vue-next'
+import { createQuestion, deleteQuestion, generateQuestionsByAi, getQuestionSubjects, getQuestions, updateQuestion } from '@/api/teacher'
+import { getQuestionTypes } from '@/api/meta'
 import http from '@/lib/http'
+import { useRouter } from 'vue-router'
 
 type OptionInput = {
   key: string
@@ -35,15 +36,22 @@ const DEFAULT_OPTIONS: OptionInput[] = [
 ]
 
 const questions = ref<any[]>([])
-const subjects = ref<Array<{ id: number, name: string }>>([])
+const subjects = ref<string[]>([])
 const questionTypes = ref<Array<{ code: string, name: string }>>([])
 
 const isLoading = ref(true)
+const isLoadingMore = ref(false)
 const isSaving = ref(false)
 const keyword = ref('')
 const activeTypeFilter = ref('all')
+const activeSubjectFilter = ref('all')
 const isEditorOpen = ref(false)
 const editingQuestionId = ref<number | null>(null)
+const currentPage = ref(1)
+const pageSize = 24
+const totalQuestions = ref(0)
+const loadMoreAnchor = ref<HTMLElement | null>(null)
+let loadMoreObserver: IntersectionObserver | null = null
 
 const isAiDialogOpen = ref(false)
 const isAiGenerating = ref(false)
@@ -53,6 +61,7 @@ const stemImageInput = ref<HTMLInputElement | null>(null)
 const analysisImageInput = ref<HTMLInputElement | null>(null)
 const optionImageInput = ref<HTMLInputElement | null>(null)
 const currentOptionImageIndex = ref<number | null>(null)
+const router = useRouter()
 
 const uploadImage = (file: File) => {
   const formData = new FormData()
@@ -79,49 +88,111 @@ const createDefaultForm = (): FormState => ({
 const form = ref<FormState>(createDefaultForm())
 
 const isChoiceQuestion = computed(() => ['single_choice', 'multiple_choice'].includes(form.value.type))
+const hasMoreQuestions = computed(() => questions.value.length < totalQuestions.value)
+const loadedSummary = computed(() => {
+  if (!totalQuestions.value) return '暂无题目'
+  return `已加载 ${questions.value.length} / ${totalQuestions.value} 题`
+})
 
 const uniqueSubjects = computed(() => {
-  const subjectSet = new Set<string>()
-  subjects.value.forEach((s) => subjectSet.add(s.name))
-  questions.value.forEach((q) => {
-    if (q.subject) {
-      subjectSet.add(q.subject)
-    }
-  })
-  return Array.from(subjectSet)
+  return subjects.value
 })
+
+const fetchQuestionSubjects = async () => {
+  try {
+    const res = await getQuestionSubjects()
+    const items = ((res as any).items || []) as string[]
+    subjects.value = items.filter((name) => typeof name === 'string' && name.trim().length > 0)
+
+    if (activeSubjectFilter.value !== 'all' && !subjects.value.includes(activeSubjectFilter.value)) {
+      activeSubjectFilter.value = 'all'
+    }
+    if (!form.value.subject && subjects.value.length > 0) {
+      form.value.subject = subjects.value[0]
+    }
+  } catch (error) {
+    console.error('Failed to fetch question subjects', error)
+    subjects.value = []
+  }
+}
 
 const fetchMeta = async () => {
   try {
-    const [subjectRes, typeRes] = await Promise.all([getSubjects(), getQuestionTypes()])
-    subjects.value = (subjectRes as any).items || []
+    const [typeRes] = await Promise.all([getQuestionTypes()])
     questionTypes.value = (typeRes as any).items || []
-    if (!form.value.subject && uniqueSubjects.value.length > 0) {
-      form.value.subject = uniqueSubjects.value[0]
-    }
+    await fetchQuestionSubjects()
   } catch (error) {
     console.error('Failed to fetch question metadata', error)
   }
 }
 
-const fetchQuestions = async () => {
+const fetchQuestions = async (reset = true) => {
+  const targetPage = reset ? 1 : currentPage.value + 1
   try {
-    isLoading.value = true
+    if (reset) {
+      isLoading.value = true
+    } else {
+      isLoadingMore.value = true
+    }
     const res = await getQuestions({
+      page: targetPage,
+      page_size: pageSize,
+      subject: activeSubjectFilter.value !== 'all' ? activeSubjectFilter.value : undefined,
       keyword: keyword.value || undefined,
       type: activeTypeFilter.value !== 'all' ? activeTypeFilter.value : undefined,
     })
-    questions.value = (res as any).items || []
+    const items = (res as any).items || []
+    totalQuestions.value = Number((res as any).total || 0)
+    currentPage.value = targetPage
+    questions.value = reset ? items : [...questions.value, ...items]
   } catch (error) {
     console.error('Failed to fetch questions', error)
   } finally {
     isLoading.value = false
+    isLoadingMore.value = false
   }
+}
+
+const loadMoreQuestions = async () => {
+  if (isLoading.value || isLoadingMore.value || !hasMoreQuestions.value) return
+  await fetchQuestions(false)
+}
+
+const syncLoadMoreObserver = async () => {
+  await nextTick()
+  if (loadMoreObserver) {
+    loadMoreObserver.disconnect()
+    loadMoreObserver = null
+  }
+  if (!loadMoreAnchor.value) return
+  loadMoreObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreQuestions()
+      }
+    },
+    { rootMargin: '180px 0px' },
+  )
+  loadMoreObserver.observe(loadMoreAnchor.value)
 }
 
 onMounted(async () => {
   await fetchMeta()
-  await fetchQuestions()
+  await fetchQuestions(true)
+  await syncLoadMoreObserver()
+})
+
+onBeforeUnmount(() => {
+  loadMoreObserver?.disconnect()
+})
+
+watch([activeTypeFilter, activeSubjectFilter], async () => {
+  await fetchQuestions(true)
+  await syncLoadMoreObserver()
+})
+
+watch(loadMoreAnchor, async () => {
+  await syncLoadMoreObserver()
 })
 
 watch(
@@ -159,6 +230,10 @@ const getDifficulty = (diff: number) => {
   if (diff <= 0.34) return '简单'
   if (diff <= 0.67) return '中等'
   return '困难'
+}
+
+const openPreview = (question: any) => {
+  router.push(`/app/teacher/questions/${question.id}/preview`)
 }
 
 const resetForm = () => {
@@ -357,7 +432,9 @@ const submitEditor = async () => {
       await createQuestion(payload)
     }
     closeEditor()
-    await fetchQuestions()
+    await fetchQuestionSubjects()
+    await fetchQuestions(true)
+    await syncLoadMoreObserver()
   } catch (error) {
     console.error('Failed to save question', error)
     alert('保存题目失败，请稍后重试')
@@ -372,7 +449,9 @@ const removeQuestion = async (questionId: number) => {
   }
   try {
     await deleteQuestion(questionId)
-    await fetchQuestions()
+    await fetchQuestionSubjects()
+    await fetchQuestions(true)
+    await syncLoadMoreObserver()
   } catch (error) {
     console.error('Failed to delete question', error)
     alert('删除题目失败，请稍后重试')
@@ -557,17 +636,22 @@ const generateByAiAndApply = async () => {
         </div>
       </div>
       <p class="page-desc">管理您的专属题库，支持 AI 辅助出题与解析。</p>
+      <p class="page-stat">{{ loadedSummary }}</p>
     </header>
 
-    <section v-if="isEditorOpen" class="editor-panel">
-      <div class="editor-header">
-        <h2>{{ editingQuestionId ? '编辑题目' : '新增题目' }}</h2>
-        <button class="close-editor-btn" @click="closeEditor" aria-label="关闭编辑器">
-          <X :size="18" />
-        </button>
-      </div>
+    <section v-if="isEditorOpen" class="editor-mask" @click.self="closeEditor">
+      <div class="editor-panel">
+        <div class="editor-header">
+          <div>
+            <h2>{{ editingQuestionId ? '编辑题目' : '新增题目' }}</h2>
+            <p class="editor-subtitle">使用独立编辑卡片录入题干、答案、解析与插图，保存后自动刷新题库。</p>
+          </div>
+          <button class="close-editor-btn" @click="closeEditor" aria-label="关闭编辑器">
+            <X :size="18" />
+          </button>
+        </div>
 
-      <div class="editor-grid">
+        <div class="editor-grid">
         <label class="form-field">
           <span>科目</span>
           <div class="subject-input-wrapper">
@@ -717,16 +801,17 @@ const generateByAiAndApply = async () => {
           </div>
           <textarea v-model="form.analysis" class="form-input" rows="3" placeholder="输入答案解析"></textarea>
         </label>
-      </div>
+        </div>
 
-      <div class="editor-actions">
-        <button class="button button--ghost" :disabled="isSaving" @click="closeEditor">取消</button>
-        <button class="button" :disabled="isSaving" @click="submitEditor">{{ isSaving ? '保存中...' : '保存题目' }}</button>
-      </div>
+        <div class="editor-actions sticky-actions">
+          <button class="button button--ghost" :disabled="isSaving" @click="closeEditor">取消</button>
+          <button class="button" :disabled="isSaving" @click="submitEditor">{{ isSaving ? '保存中...' : '保存题目' }}</button>
+        </div>
 
-      <input ref="stemImageInput" class="hidden-file" type="file" accept="image/*" @change="onStemImageChange" />
-      <input ref="analysisImageInput" class="hidden-file" type="file" accept="image/*" @change="onAnalysisImageChange" />
-      <input ref="optionImageInput" class="hidden-file" type="file" accept="image/*" @change="onOptionImageChange" />
+        <input ref="stemImageInput" class="hidden-file" type="file" accept="image/*" @change="onStemImageChange" />
+        <input ref="analysisImageInput" class="hidden-file" type="file" accept="image/*" @change="onAnalysisImageChange" />
+        <input ref="optionImageInput" class="hidden-file" type="file" accept="image/*" @change="onOptionImageChange" />
+      </div>
     </section>
 
     <section v-if="isAiDialogOpen" class="ai-dialog-mask" @click.self="closeAiDialog">
@@ -754,21 +839,25 @@ const generateByAiAndApply = async () => {
     <div class="search-section">
       <div class="search-bar">
         <Search :size="16" class="search-icon" />
-        <input type="text" placeholder="搜索题目内容、知识点..." class="search-input" v-model="keyword" @keyup.enter="fetchQuestions" />
+        <input type="text" placeholder="搜索题目内容、知识点..." class="search-input" v-model="keyword" @keyup.enter="fetchQuestions(true)" />
       </div>
-      <button class="icon-button filter-btn" @click="fetchQuestions">
+      <select v-model="activeSubjectFilter" class="subject-filter-select">
+        <option value="all">全部科目</option>
+        <option v-for="sub in uniqueSubjects" :key="sub" :value="sub">{{ sub }}</option>
+      </select>
+      <button class="icon-button filter-btn" @click="fetchQuestions(true)">
         <Filter :size="18" />
       </button>
     </div>
 
     <div class="filter-chips">
-      <span class="chip" :class="{ active: activeTypeFilter === 'all' }" @click="activeTypeFilter = 'all'; fetchQuestions()">全部</span>
+      <span class="chip" :class="{ active: activeTypeFilter === 'all' }" @click="activeTypeFilter = 'all'">全部</span>
       <span
         v-for="item in questionTypes"
         :key="item.code"
         class="chip"
         :class="{ active: activeTypeFilter === item.code }"
-        @click="activeTypeFilter = item.code; fetchQuestions()"
+        @click="activeTypeFilter = item.code"
       >
         {{ item.name }}
       </span>
@@ -797,22 +886,34 @@ const generateByAiAndApply = async () => {
         <div class="q-content">
           {{ q.stem }}
         </div>
-        
         <div class="q-footer">
           <div class="q-knowledge">
-            <span v-for="k in (q.knowledge_points || [])" :key="k.id" class="k-tag">#{{ k.name }}</span>
+            <span v-if="Array.isArray(q.knowledge_points) && q.knowledge_points.length === 0" class="k-tag">暂无知识点</span>
+            <span v-for="point in q.knowledge_points || []" :key="point.id" class="k-tag"># {{ point.name }}</span>
           </div>
           <div class="q-actions">
-            <button class="button button--ghost button--small" @click="openEdit(q)">
-              <Pencil :size="14" />
-              编辑
+            <button class="button button--small button--ghost" @click="openPreview(q)">
+              <Eye :size="14" />
+              <span>预览</span>
             </button>
-            <button class="button button--danger button--small" @click="removeQuestion(q.id)">
+            <button class="button button--small button--ghost" @click="openEdit(q)">
+              <Pencil :size="14" />
+              <span>编辑</span>
+            </button>
+            <button class="button button--small button--danger" @click="removeQuestion(q.id)">
               <Trash2 :size="14" />
-              删除
+              <span>删除</span>
             </button>
           </div>
         </div>
+      </div>
+
+      <div ref="loadMoreAnchor" class="load-more-zone">
+        <span v-if="isLoadingMore">正在加载更多题目...</span>
+        <button v-else-if="hasMoreQuestions" class="button button--ghost load-more-btn" @click="loadMoreQuestions">
+          加载更多
+        </button>
+        <span v-else>已经到底了</span>
       </div>
     </div>
   </div>
@@ -820,19 +921,91 @@ const generateByAiAndApply = async () => {
 
 <style scoped>
 .view-questions {
+  --bg: #f6f8fb;
+  --line: #dbe4f0;
+  --ink: #162033;
+  --ink-soft: #66758c;
+  --accent: #2563eb;
+  --border-hover: #c7d5ea;
+  --radius-md: 14px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 18px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.button:hover {
+  filter: brightness(0.98);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.button--small {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.button--ghost {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.button--primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.editor-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
 }
 
 .editor-panel {
-  border: 1px solid var(--line);
+  width: min(960px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 20px;
+  border-radius: 24px;
   background: #fff;
-  border-radius: var(--radius-md);
-  padding: 16px;
+  border: 1px solid var(--line);
   display: flex;
   flex-direction: column;
   gap: 14px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
 }
 
 .editor-header {
@@ -843,8 +1016,14 @@ const generateByAiAndApply = async () => {
 
 .editor-header h2 {
   margin: 0;
-  font-size: 16px;
+  font-size: 20px;
   color: var(--ink);
+}
+
+.editor-subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--ink-soft);
 }
 
 .close-editor-btn {
@@ -1165,6 +1344,12 @@ const generateByAiAndApply = async () => {
   gap: 8px;
 }
 
+.page-stat {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
 .header-main {
   display: flex;
   justify-content: space-between;
@@ -1227,6 +1412,16 @@ const generateByAiAndApply = async () => {
 .search-section {
   display: flex;
   gap: 12px;
+}
+
+.subject-filter-select {
+  min-width: 132px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fff;
+  color: var(--ink);
+  padding: 0 12px;
+  font-size: 14px;
 }
 
 .search-bar {
@@ -1304,6 +1499,26 @@ const generateByAiAndApply = async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.load-more-zone {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 72px;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.load-more-btn {
+  min-width: 132px;
+}
+
+.sticky-actions {
+  position: sticky;
+  bottom: 0;
+  padding-top: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.5), #fff 36%);
 }
 
 .question-card {
@@ -1438,6 +1653,26 @@ const generateByAiAndApply = async () => {
 @media (max-width: 768px) {
   .editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .editor-mask {
+    padding: 8px;
+    align-items: stretch;
+  }
+
+  .editor-panel {
+    width: 100%;
+    max-height: 100vh;
+    border-radius: 16px;
+  }
+
+  .search-section {
+    flex-wrap: wrap;
+  }
+
+  .subject-filter-select {
+    flex: 1 1 140px;
+    min-height: 42px;
   }
 
   .q-footer {

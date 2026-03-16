@@ -1,6 +1,9 @@
 import json
-from datetime import datetime, UTC
+import re
+from datetime import datetime, UTC, timedelta
 from uuid import uuid4
+from random import Random
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func, select
@@ -11,8 +14,8 @@ from app.core.response import success_response
 from app.models.academic import ClassRoom, ClassStudent, KnowledgePoint, Subject
 from app.models.exam import Exam, ExamClass, ExamQuestion, ExamSubmission, SubmissionAnswer
 from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
-from app.models.user import ReviewItem, ReviewLog, User
-from app.schemas.teacher import AIQuestionGenerateRequest, AIQuestionReviewRequest, AIScoreRequest, ClassCreateRequest, ClassInviteRequest, DeleteRequest, ExamActionRequest, ExamCreateRequest, ExamUpdateRequest, ImportQuestionsRequest, QuestionCreateRequest, QuestionUpdateRequest, ReviewSubmitRequest
+from app.models.user import AITask, ReviewItem, ReviewLog, StudentProfileSnapshot, StudyPlan, StudyTask, User
+from app.schemas.teacher import AIExamAssembleRequest, AIQuestionGenerateRequest, AIQuestionReviewRequest, AIScoreRequest, ClassCreateRequest, ClassInviteRequest, DeleteRequest, ExamActionRequest, ExamCreateRequest, ExamUpdateRequest, ImportQuestionsRequest, QuestionCreateRequest, QuestionUpdateRequest, RetakeRequestActionRequest, ReviewSubmitRequest
 from app.services.realtime import realtime_events, submission_channel
 from app.services.llm import generate_questions_with_llm
 from app.services.scoring import SUBJECTIVE_TYPES, serialize_answer
@@ -42,6 +45,7 @@ def get_teacher_dashboard_overview(
                     "risk_student_count": 0,
                     "avg_score_trend": [],
                     "ai_class_summary": "当前学科下暂无考试数据。",
+                    "risk_students": [],
                 }
             )
         exam_query = exam_query.where(Exam.subject_id == subject_obj.id)
@@ -55,6 +59,7 @@ def get_teacher_dashboard_overview(
                 "risk_student_count": 0,
                 "avg_score_trend": [],
                 "ai_class_summary": "当前暂无考试数据，建议先创建并发布考试。",
+                "risk_students": [],
             }
         )
 
@@ -62,9 +67,106 @@ def get_teacher_dashboard_overview(
         select(func.count()).select_from(ReviewItem).where(ReviewItem.exam_id.in_(exam_ids), ReviewItem.review_status == "pending")
     ) or 0
 
-    risk_student_count = db.scalar(
-        select(func.count(func.distinct(ExamSubmission.student_id))).where(ExamSubmission.exam_id.in_(exam_ids), ExamSubmission.total_score < 60)
-    ) or 0
+    risk_submissions = db.scalars(
+        select(ExamSubmission)
+        .where(ExamSubmission.exam_id.in_(exam_ids))
+        .where(ExamSubmission.status.in_(["submitted", "completed", "reviewed"]))
+        .order_by(ExamSubmission.submitted_at.desc(), ExamSubmission.created_at.desc())
+    ).all()
+
+    latest_submission_by_student: dict[int, ExamSubmission] = {}
+    for submission in risk_submissions:
+        student_id = int(submission.student_id)
+        if student_id in latest_submission_by_student:
+            continue
+        latest_submission_by_student[student_id] = submission
+
+    ability_suggestion_map = {
+        "审题能力": "先带学生口述题意和关键词，再下笔作答，降低读题偏差。",
+        "知识迁移能力": "每次讲评后补 2 道同知识点变式题，强化迁移应用。",
+        "稳定作答能力": "训练固定答题节奏（先易后难），并限制单题停留时间。",
+    }
+
+    risk_students: list[dict[str, Any]] = []
+    for student_id, submission in latest_submission_by_student.items():
+        latest_score = float(submission.total_score or 0)
+        correct_rate = float(submission.correct_rate or 0)
+        if latest_score >= 60 and correct_rate >= 0.6:
+            continue
+
+        if latest_score < 45 or correct_rate < 0.45:
+            risk_level = "high"
+        elif latest_score < 60 or correct_rate < 0.6:
+            risk_level = "medium"
+        else:
+            risk_level = "low"
+
+        student = db.get(User, student_id)
+        exam = db.get(Exam, submission.exam_id)
+        class_obj = db.get(ClassRoom, submission.class_id) if submission.class_id else None
+
+        snapshot = db.scalar(
+            select(StudentProfileSnapshot)
+            .where(
+                StudentProfileSnapshot.student_id == student_id,
+                StudentProfileSnapshot.source_exam_id.in_(exam_ids),
+            )
+            .order_by(StudentProfileSnapshot.created_at.desc())
+            .limit(1)
+        )
+        profile_json = snapshot.profile_json if snapshot and isinstance(snapshot.profile_json, dict) else {}
+        weak_points = profile_json.get("weak_knowledge_points") or []
+        weak_point_names = [str(item.get("name") or "").strip() for item in weak_points if item.get("name")]
+        weak_point_names = [name for name in weak_point_names if name][:3]
+
+        weak_abilities: list[str] = []
+        wrong_count = int(profile_json.get("wrong_question_count") or 0)
+        total_questions = int(profile_json.get("total_questions") or 0)
+        if total_questions > 0 and wrong_count / max(total_questions, 1) >= 0.5:
+            weak_abilities.append("审题能力")
+        if latest_score < 60:
+            weak_abilities.append("稳定作答能力")
+        if correct_rate < 0.6 or len(weak_point_names) >= 2:
+            weak_abilities.append("知识迁移能力")
+        if not weak_abilities:
+            weak_abilities.append("审题能力")
+
+        # 去重保序
+        seen_ability: set[str] = set()
+        weak_abilities = [ability for ability in weak_abilities if not (ability in seen_ability or seen_ability.add(ability))][:3]
+
+        coaching_suggestions: list[str] = []
+        if weak_point_names:
+            coaching_suggestions.append(f"围绕 {weak_point_names[0]} 做“讲 1 题 + 练 2 题 + 复盘 1 题”微循环训练。")
+        for ability in weak_abilities:
+            suggestion = ability_suggestion_map.get(ability)
+            if suggestion:
+                coaching_suggestions.append(suggestion)
+        if not coaching_suggestions:
+            coaching_suggestions.append("建议先进行 15 分钟错因复盘，再安排 20 分钟针对训练。")
+
+        seen_suggestion: set[str] = set()
+        coaching_suggestions = [text for text in coaching_suggestions if not (text in seen_suggestion or seen_suggestion.add(text))][:3]
+
+        risk_students.append(
+            {
+                "student_id": student_id,
+                "student_name": student.name if student else f"学生#{student_id}",
+                "class_name": class_obj.name if class_obj else None,
+                "exam_id": submission.exam_id,
+                "exam_title": exam.title if exam else None,
+                "latest_score": round(latest_score, 1),
+                "correct_rate": round(correct_rate, 2),
+                "risk_level": risk_level,
+                "weak_abilities": weak_abilities,
+                "weak_knowledge_points": weak_point_names,
+                "coaching_suggestions": coaching_suggestions,
+            }
+        )
+
+    risk_students.sort(key=lambda item: (0 if item["risk_level"] == "high" else 1, item["latest_score"]))
+    risk_students = risk_students[:12]
+    risk_student_count = len(risk_students)
 
     trend_rows = db.execute(
         select(
@@ -87,6 +189,7 @@ def get_teacher_dashboard_overview(
             "risk_student_count": risk_student_count,
             "avg_score_trend": avg_score_trend,
             "ai_class_summary": f"已创建 {len(exam_ids)} 场考试，当前待批阅 {pending_review_count} 份，风险学生 {risk_student_count} 人。",
+            "risk_students": risk_students,
         }
     )
 
@@ -343,6 +446,32 @@ def list_questions(
     return success_response({"items": [_serialize_question(db, item) for item in items], "total": total})
 
 
+@router.get("/teacher/questions/subjects")
+def list_question_subjects(current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    返回当前教师题库中实际存在题目的科目名称列表。
+    """
+    names = db.scalars(
+        select(Subject.name)
+        .join(Question, Question.subject_id == Subject.id)
+        .where(Question.created_by == current_user.id)
+        .group_by(Subject.name)
+        .order_by(Subject.name.asc())
+    ).all()
+    return success_response({"items": [name for name in names if name]})
+
+
+@router.get("/teacher/questions/detail")
+def get_question_detail(question_id: int, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
+    """
+    获取单个题目的完整详情，用于教师侧独立预览页。
+    """
+    question = db.get(Question, question_id)
+    if not question or question.created_by != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
+    return success_response({"question": _serialize_question(db, question)})
+
+
 @router.post("/teacher/questions/create")
 def create_question(payload: QuestionCreateRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
     """
@@ -411,9 +540,19 @@ def delete_question(payload: DeleteRequest, current_user: User = Depends(require
     question = db.get(Question, payload.question_id)
     if not question or question.created_by != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
+
+    affected_exam_ids = db.scalars(select(ExamQuestion.exam_id).where(ExamQuestion.question_id == question.id)).all()
+    if affected_exam_ids:
+        db.query(ExamQuestion).filter(ExamQuestion.question_id == question.id).delete(synchronize_session=False)
+
     db.query(QuestionOption).filter(QuestionOption.question_id == question.id).delete()
     db.query(QuestionKnowledgePoint).filter(QuestionKnowledgePoint.question_id == question.id).delete()
     db.delete(question)
+
+    for exam_id in set(affected_exam_ids):
+        if _count_valid_exam_questions(db, exam_id) <= 0:
+            _cleanup_study_tasks_for_exam(db, exam_id)
+
     db.commit()
     return success_response({"success": True}, "question deleted")
 
@@ -466,6 +605,73 @@ def ai_generate_questions(payload: AIQuestionGenerateRequest, current_user: User
     )
 
 
+@router.post("/teacher/exams/ai-assemble")
+def ai_assemble_exam_from_bank(
+    payload: AIExamAssembleRequest,
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    """
+    根据教师的自然语言描述，从现有题库中自动挑题组卷。
+    """
+    subject_obj = _get_subject_by_name(db, payload.subject)
+    questions = db.scalars(
+        select(Question)
+        .where(Question.created_by == current_user.id, Question.subject_id == subject_obj.id)
+        .order_by(Question.created_at.desc())
+    ).all()
+    if not questions:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="当前科目题库为空，无法智能组卷")
+
+    requirements = _parse_exam_assemble_requirement(payload.requirement)
+    if not requirements:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="未能识别出组卷要求，请更明确说明题型与数量")
+
+    excluded_ids = set(payload.exclude_question_ids or [])
+    selected_ids: set[int] = set(excluded_ids)
+    selected_questions: list[Question] = []
+    matched_blocks: list[dict[str, Any]] = []
+    unmet_blocks: list[dict[str, Any]] = []
+
+    for block in requirements:
+      matched = _pick_questions_for_requirement(questions, block, selected_ids)
+      if matched:
+          selected_questions.extend(matched)
+          selected_ids.update(item.id for item in matched)
+
+      matched_blocks.append(
+          {
+              "label": block["label"],
+              "count": block["count"],
+              "matched_count": len(matched),
+              "keywords": block["keywords"],
+          }
+      )
+      if len(matched) < block["count"]:
+          unmet_blocks.append(
+              {
+                  "label": block["label"],
+                  "requested_count": block["count"],
+                  "matched_count": len(matched),
+                  "keywords": block["keywords"],
+              }
+          )
+
+    serialized = [_serialize_question(db, item) for item in selected_questions]
+    summary_parts = [f"已匹配 {len(serialized)} 题"]
+    for block in matched_blocks:
+        summary_parts.append(f"{block['label']} {block['matched_count']}/{block['count']} 题")
+
+    return success_response(
+        {
+            "questions": serialized,
+            "matched_requirements": matched_blocks,
+            "unmet_requirements": unmet_blocks,
+            "summary": "，".join(summary_parts),
+        }
+    )
+
+
 @router.post("/teacher/questions/ai-review")
 def ai_review_question(payload: AIQuestionReviewRequest, current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)):
     """
@@ -493,19 +699,52 @@ def create_exam(payload: ExamCreateRequest, current_user: User = Depends(require
     """
     创建新的 exam 记录。
     """
+    normalized_title = payload.title.strip()
+    if not normalized_title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Exam title is required")
+
+    duplicate_exam = db.scalar(
+        select(Exam).where(
+            Exam.created_by == current_user.id,
+            func.lower(Exam.title) == normalized_title.lower(),
+        ).limit(1)
+    )
+    if duplicate_exam:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Exam title already exists for current teacher")
+
+    if payload.publish_now and len(payload.class_ids) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please bind at least one class before publishing")
+    if payload.publish_now and len(payload.question_items) == 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please add at least one question before publishing")
+
+    start_time = payload.start_time
+    end_time = payload.end_time
+    if payload.publish_now:
+        now_utc = datetime.now(UTC)
+        start_aware = start_time if start_time.tzinfo is not None else start_time.replace(tzinfo=UTC)
+        end_aware = end_time if end_time.tzinfo is not None else end_time.replace(tzinfo=UTC)
+        if end_aware <= now_utc or start_aware >= end_aware:
+            start_aware = now_utc
+            end_aware = now_utc + timedelta(minutes=max(int(payload.duration_minutes or 60), 1))
+
+        # Persist as UTC-naive for SQLite consistency.
+        start_time = start_aware.replace(tzinfo=None)
+        end_time = end_aware.replace(tzinfo=None)
+
     subject_obj = _get_subject_by_name(db, payload.subject)
     exam = Exam(
         created_by=current_user.id,
         subject_id=subject_obj.id,
-        title=payload.title,
+        title=normalized_title,
         duration_minutes=payload.duration_minutes,
         total_score=sum(item.score for item in payload.question_items),
-        status="draft",
+        status="published" if payload.publish_now else "draft",
         instructions=payload.instructions,
         allow_review=payload.allow_review,
         random_question_order=payload.random_question_order,
-        start_time=payload.start_time,
-        end_time=payload.end_time,
+        start_time=start_time,
+        end_time=end_time,
+        published_at=datetime.now(UTC).replace(tzinfo=None) if payload.publish_now else None,
     )
     db.add(exam)
     db.commit()
@@ -693,11 +932,52 @@ def publish_exam(payload: ExamActionRequest, current_user: User = Depends(requir
     处理 publish exam 请求并返回结果。
     """
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
+
+    # Publishing an exam without bound classes means students can never see it.
+    bound_class_count = db.scalar(
+        select(func.count()).select_from(ExamClass).where(ExamClass.exam_id == exam.id)
+    ) or 0
+    if bound_class_count <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please bind at least one class before publishing")
+
+    question_count = db.scalar(
+        select(func.count()).select_from(ExamQuestion).where(ExamQuestion.exam_id == exam.id)
+    ) or 0
+    if question_count <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Please add at least one question before publishing")
+
+    now_utc = datetime.now(UTC)
+
+    # SQLite 历史数据可能是 naive datetime；新数据可能是 aware datetime。
+    # 统一比较基准，避免 naive/aware 混比触发 TypeError。
+    if exam.start_time.tzinfo is None and exam.end_time.tzinfo is None:
+        compare_now = now_utc.replace(tzinfo=None)
+        compare_start = exam.start_time
+        compare_end = exam.end_time
+    else:
+        compare_now = now_utc
+        compare_start = exam.start_time if exam.start_time.tzinfo is not None else exam.start_time.replace(tzinfo=UTC)
+        compare_end = exam.end_time if exam.end_time.tzinfo is not None else exam.end_time.replace(tzinfo=UTC)
+
+    # If a draft is published long after creation, the original exam window may already expire.
+    # Auto-refresh the window to keep the exam visible to students after publishing.
+    if compare_end <= compare_now or compare_start >= compare_end:
+        exam.start_time = compare_now
+        exam.end_time = compare_now + timedelta(minutes=max(int(exam.duration_minutes or 60), 1))
+
     exam.status = "published"
-    exam.published_at = datetime.now(UTC)
+    exam.published_at = compare_now
     db.add(exam)
     db.commit()
-    return success_response({"exam_id": exam.id, "status": exam.status}, "exam published")
+    return success_response(
+        {
+            "exam_id": exam.id,
+            "status": exam.status,
+            "start_time": exam.start_time.isoformat(),
+            "end_time": exam.end_time.isoformat(),
+        },
+        "exam published",
+    )
 
 
 @router.post("/teacher/exams/pause")
@@ -733,6 +1013,12 @@ def delete_exam(payload: DeleteRequest, current_user: User = Depends(require_rol
     if payload.exam_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="exam_id is required")
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
+
+    # Only finished exams can be deleted to prevent accidental removal of active tasks.
+    if exam.status != "finished":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only finished exams can be deleted")
+
+    _cleanup_study_tasks_for_exam(db, exam.id)
     db.query(ExamQuestion).filter(ExamQuestion.exam_id == exam.id).delete()
     db.query(ExamClass).filter(ExamClass.exam_id == exam.id).delete()
     db.delete(exam)
@@ -813,7 +1099,242 @@ def list_review_items(
         query = query.where(ReviewItem.review_status == review_status)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     items = db.scalars(query.offset((page - 1) * page_size).limit(page_size)).all()
-    return success_response({"items": [_serialize_review_item(item) for item in items], "total": total})
+
+    submission_rows = db.execute(
+        select(ExamSubmission, User)
+        .join(User, User.id == ExamSubmission.student_id)
+        .where(ExamSubmission.exam_id == exam_id)
+        .order_by(ExamSubmission.submitted_at.desc(), ExamSubmission.created_at.desc())
+    ).all()
+
+    submission_items: list[dict[str, Any]] = []
+    for submission, student in submission_rows:
+        item_count = db.scalar(
+            select(func.count()).select_from(ReviewItem).where(ReviewItem.submission_id == submission.id)
+        ) or 0
+        pending_count = db.scalar(
+            select(func.count()).select_from(ReviewItem).where(
+                ReviewItem.submission_id == submission.id,
+                ReviewItem.review_status == "pending",
+            )
+        ) or 0
+        submission_items.append(
+            {
+                "submission_id": submission.id,
+                "student_id": submission.student_id,
+                "student_name": student.name,
+                "status": submission.status,
+                "review_status": submission.review_status,
+                "submitted_at": submission.submitted_at.isoformat() if submission.submitted_at else None,
+                "total_score": float(submission.total_score or 0),
+                "manual_item_count": int(item_count),
+                "pending_manual_count": int(pending_count),
+            }
+        )
+
+    return success_response(
+        {
+            "items": [_serialize_review_item(item) for item in items],
+            "total": total,
+            "manual_review_required": total > 0,
+            "submissions": submission_items,
+        }
+    )
+
+
+@router.get("/teacher/review/tasks")
+def list_review_tasks(
+    view: str = Query("all"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    """
+    教师阅卷任务总览：同时返回待阅和已阅任务。
+    """
+    exams = db.scalars(
+        select(Exam)
+        .where(Exam.created_by == current_user.id)
+        .order_by(Exam.created_at.desc())
+    ).all()
+
+    tasks = []
+    for exam in exams:
+        total_submissions = db.scalar(select(func.count()).select_from(ExamSubmission).where(ExamSubmission.exam_id == exam.id)) or 0
+        if total_submissions <= 0:
+            continue
+
+        # 与 /teacher/review/items 保持一致：阅卷任务只统计真实存在的 review items。
+        total_review_items = db.scalar(
+            select(func.count()).select_from(ReviewItem).where(ReviewItem.exam_id == exam.id)
+        ) or 0
+
+        pending_review_count = db.scalar(
+            select(func.count()).select_from(ReviewItem).where(
+                ReviewItem.exam_id == exam.id,
+                ReviewItem.review_status == "pending",
+            )
+        ) or 0
+        reviewed_count = db.scalar(
+            select(func.count()).select_from(ReviewItem).where(
+                ReviewItem.exam_id == exam.id,
+                ReviewItem.review_status == "reviewed",
+            )
+        ) or 0
+        has_pending = pending_review_count > 0
+        review_mode = "manual" if total_review_items > 0 else "objective_only"
+        if view == "pending" and not has_pending:
+            continue
+        if view == "completed" and has_pending:
+            continue
+
+        latest_submit = db.scalar(
+            select(func.max(ExamSubmission.submitted_at)).where(ExamSubmission.exam_id == exam.id)
+        )
+        subject = db.get(Subject, exam.subject_id)
+        tasks.append(
+            {
+                "exam_id": exam.id,
+                "exam_title": exam.title,
+                "subject": subject.name if subject else None,
+                "exam_status": exam.status,
+                "total_submissions": int(total_submissions),
+                "total_review_items": int(total_review_items),
+                "pending_count": int(pending_review_count),
+                "reviewed_count": int(reviewed_count),
+                "ai_status": "completed",
+                "task_status": "pending" if has_pending else "completed",
+                "review_mode": review_mode,
+                "latest_submitted_at": latest_submit.isoformat() if latest_submit else None,
+            }
+        )
+
+    total = len(tasks)
+    start = (page - 1) * page_size
+    end = start + page_size
+    return success_response({"items": tasks[start:end], "total": total})
+
+
+@router.get("/teacher/review/retake-requests")
+def list_retake_requests(
+    status_filter: str | None = Query(None, alias="status"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    """
+    列出学生重考申请，供教师审批。
+    """
+    exam_ids = db.scalars(select(Exam.id).where(Exam.created_by == current_user.id)).all()
+    if not exam_ids:
+        return success_response({"items": [], "total": 0})
+
+    query = select(AITask).where(
+        AITask.type == "retake_request",
+        AITask.resource_type == "exam",
+        AITask.resource_id.in_(exam_ids),
+    )
+    if status_filter:
+        query = query.where(AITask.status == status_filter)
+
+    total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = db.scalars(
+        query.order_by(
+            case((AITask.status == "pending", 0), else_=1),
+            AITask.created_at.desc(),
+        ).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+
+    items = []
+    for row in rows:
+        payload = row.request_payload or {}
+        exam = db.get(Exam, int(row.resource_id or 0))
+        student_id = int(payload.get("student_id") or 0)
+        student = db.get(User, student_id) if student_id else None
+        items.append(
+            {
+                "request_id": row.id,
+                "status": row.status,
+                "exam_id": row.resource_id,
+                "exam_title": exam.title if exam else None,
+                "student_id": student_id or None,
+                "student_name": student.name if student else payload.get("student_name"),
+                "reason": payload.get("reason"),
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+                "comment": (row.result_payload or {}).get("comment") if row.result_payload else None,
+            }
+        )
+
+    return success_response({"items": items, "total": total})
+
+
+@router.post("/teacher/review/retake-requests/action")
+def review_retake_request(
+    payload: RetakeRequestActionRequest,
+    current_user: User = Depends(require_role("teacher")),
+    db: Session = Depends(get_db),
+):
+    """
+    教师审批重考申请：approve 或 reject。
+    """
+    request_task = db.get(AITask, payload.request_id)
+    if not request_task or request_task.type != "retake_request":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Retake request not found")
+
+    exam_id = int(request_task.resource_id or 0)
+    exam = _get_teacher_exam(db, current_user.id, exam_id)
+    request_payload = request_task.request_payload or {}
+    student_id = int(request_payload.get("student_id") or request_task.created_by or 0)
+    if student_id <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid retake request")
+
+    action = (payload.action or "").strip().lower()
+    if action not in {"approve", "reject"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid action")
+    if request_task.status not in {"pending", "approved", "rejected"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Retake request is not actionable")
+
+    if action == "approve":
+        submission = db.scalar(
+            select(ExamSubmission).where(ExamSubmission.exam_id == exam.id, ExamSubmission.student_id == student_id)
+        )
+        if not submission:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found")
+
+        review_item_ids = db.scalars(select(ReviewItem.id).where(ReviewItem.submission_id == submission.id)).all()
+        if review_item_ids:
+            db.query(ReviewLog).filter(ReviewLog.review_item_id.in_(review_item_ids)).delete(synchronize_session=False)
+            db.query(ReviewItem).filter(ReviewItem.id.in_(review_item_ids)).delete(synchronize_session=False)
+
+        submission.status = "not_started"
+        submission.started_at = None
+        submission.submitted_at = None
+        submission.deadline_at = None
+        submission.objective_score = 0
+        submission.subjective_score = 0
+        submission.total_score = 0
+        submission.correct_rate = 0
+        submission.ranking_in_class = None
+        submission.review_status = "pending"
+        submission.ai_analysis_status = "pending"
+        db.query(SubmissionAnswer).filter(SubmissionAnswer.submission_id == submission.id).delete(synchronize_session=False)
+        db.add(submission)
+
+    request_task.status = "approved" if action == "approve" else "rejected"
+    request_task.progress = 100
+    request_task.finished_at = datetime.now(UTC)
+    request_task.result_payload = {
+        "reviewed_by": current_user.id,
+        "action": action,
+        "comment": (payload.comment or "").strip()[:300] if payload.comment else None,
+        "reviewed_at": datetime.now(UTC).isoformat(),
+    }
+    db.add(request_task)
+    db.commit()
+    return success_response({"request_id": request_task.id, "status": request_task.status})
 
 
 @router.post("/teacher/review/submit")
@@ -923,6 +1444,12 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
     subject = db.get(Subject, exam.subject_id)
     class_ids = db.scalars(select(ExamClass.class_id).where(ExamClass.exam_id == exam.id)).all()
     question_count = db.scalar(select(func.count()).select_from(ExamQuestion).where(ExamQuestion.exam_id == exam.id)) or 0
+
+    def as_utc_iso(dt: datetime) -> str:
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC).isoformat().replace("+00:00", "Z")
+        return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
     return {
         "id": exam.id,
         "title": exam.title,
@@ -930,8 +1457,8 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
         "duration_minutes": exam.duration_minutes,
         "total_score": float(exam.total_score),
         "status": exam.status,
-        "start_time": exam.start_time.isoformat(),
-        "end_time": exam.end_time.isoformat(),
+        "start_time": as_utc_iso(exam.start_time),
+        "end_time": as_utc_iso(exam.end_time),
         "instructions": exam.instructions,
         "allow_review": exam.allow_review,
         "random_question_order": exam.random_question_order,
@@ -970,6 +1497,148 @@ def _serialize_review_item(item: ReviewItem) -> dict:
         "final_score": float(item.final_score) if item.final_score is not None else None,
         "review_status": item.review_status,
     }
+
+
+def _parse_exam_assemble_requirement(requirement: str) -> list[dict[str, Any]]:
+    text = re.sub(r"\s+", "", str(requirement or ""))
+    if not text:
+        return []
+
+    normalized = text
+    replacements = {
+        "单项选择题": "单选题",
+        "多项选择题": "多选题",
+        "选择": "选择题",
+        "判断": "判断题",
+        "填空": "填空题",
+        "简答": "简答题",
+        "问答题": "简答题",
+    }
+    for old, new in replacements.items():
+        normalized = normalized.replace(old, new)
+
+    segments = [seg for seg in re.split(r"[，,；;。]|加|再加|以及|并且|同时|另加|另外", normalized) if seg]
+    parsed: list[dict[str, Any]] = []
+    for segment in segments:
+        block = _parse_requirement_segment(segment)
+        if block:
+            parsed.append(block)
+
+    if parsed:
+        return parsed
+
+    total = _extract_count_from_text(normalized)
+    keywords = _extract_keywords(normalized)
+    if total:
+        return [{"label": "综合题目", "allowed_types": None, "count": total, "keywords": keywords}]
+    return []
+
+
+def _parse_requirement_segment(segment: str) -> dict[str, Any] | None:
+    type_aliases = [
+        ("单选题", ["single_choice"]),
+        ("多选题", ["multiple_choice"]),
+        ("选择题", ["single_choice", "multiple_choice"]),
+        ("判断题", ["judge"]),
+        ("填空题", ["blank"]),
+        ("简答题", ["essay"]),
+    ]
+    for label, allowed_types in type_aliases:
+        if label not in segment:
+            continue
+        count = _extract_count_from_text(segment)
+        if count <= 0:
+            continue
+        keywords = _extract_keywords(segment.replace(label, ""))
+        return {
+            "label": label,
+            "allowed_types": allowed_types,
+            "count": count,
+            "keywords": keywords,
+        }
+    return None
+
+
+def _extract_count_from_text(text: str) -> int:
+    arabic = re.search(r"(\d{1,3})\s*(?:道|个|题)?", text)
+    if arabic:
+        return max(0, int(arabic.group(1)))
+    chinese = re.search(r"([零一二两三四五六七八九十百]+)\s*(?:道|个|题)", text)
+    if chinese:
+        return _chinese_number_to_int(chinese.group(1))
+    return 0
+
+
+def _chinese_number_to_int(text: str) -> int:
+    chars = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    if text == "十":
+        return 10
+    if "十" in text:
+        left, _, right = text.partition("十")
+        tens = chars.get(left, 1) if left else 1
+        units = chars.get(right, 0) if right else 0
+        return tens * 10 + units
+    return chars.get(text, 0)
+
+
+def _extract_keywords(text: str) -> list[str]:
+    cleaned = re.sub(r"(\d+|[零一二两三四五六七八九十百]+)(?:道|个|题)?", " ", text)
+    for token in ["我想", "我要", "希望", "出一套", "卷子", "试卷", "试题", "工程制图", "的", "和", "及", "并", "全部题型"]:
+        cleaned = cleaned.replace(token, " ")
+    cleaned = re.sub(r"[^\u4e00-\u9fa5A-Za-z0-9]+", " ", cleaned)
+    parts = [part.strip() for part in cleaned.split(" ") if part.strip()]
+    unique_parts: list[str] = []
+    for part in parts:
+        if len(part) <= 1 and not part.isdigit():
+            continue
+        if part not in unique_parts:
+            unique_parts.append(part)
+    return unique_parts[:5]
+
+
+def _pick_questions_for_requirement(
+    questions: list[Question],
+    requirement: dict[str, Any],
+    selected_ids: set[int],
+) -> list[Question]:
+    ranked: list[tuple[int, Question]] = []
+    for question in questions:
+        if question.id in selected_ids:
+            continue
+        if requirement["allowed_types"] and question.type not in requirement["allowed_types"]:
+            continue
+        score = _score_question_for_requirement(question, requirement)
+        ranked.append((score, question))
+
+    ranked.sort(key=lambda item: (-item[0], -(item[1].id or 0)))
+    if not ranked:
+        return []
+
+    top = ranked[: max(requirement["count"] * 3, requirement["count"])]
+    randomizer = Random(requirement["label"] + "-" + "-".join(requirement["keywords"]))
+    if requirement["keywords"]:
+        head = [item for item in top if item[0] > 0]
+        tail = [item for item in top if item[0] <= 0]
+        randomizer.shuffle(tail)
+        ordered = head + tail
+    else:
+        ordered = top[:]
+        randomizer.shuffle(ordered)
+    return [item[1] for item in ordered[: requirement["count"]]]
+
+
+def _score_question_for_requirement(question: Question, requirement: dict[str, Any]) -> int:
+    if not requirement["keywords"]:
+        return 1
+    haystacks = [str(question.stem or ""), str(question.analysis or "")]
+    extra_meta = question.extra_meta or {}
+    haystacks.extend(str(tag) for tag in extra_meta.get("ability_tags", []))
+    full_text = " ".join(haystacks).lower()
+    score = 0
+    for keyword in requirement["keywords"]:
+        if keyword.lower() in full_text:
+            score += 4
+    return score
 
 
 def _get_subject_by_name(db: Session, subject_name: str) -> Subject:
@@ -1029,4 +1698,29 @@ def _replace_exam_relations(db: Session, exam_id: int, class_ids, question_items
         db.query(ExamQuestion).filter(ExamQuestion.exam_id == exam_id).delete()
         for item in question_items:
             db.add(ExamQuestion(exam_id=exam_id, question_id=item.question_id, score=item.score, order_no=item.order_no, section_name=item.section_name))
+        if len(question_items) == 0:
+            _cleanup_study_tasks_for_exam(db, exam_id)
     db.commit()
+
+
+def _count_valid_exam_questions(db: Session, exam_id: int) -> int:
+    """
+    统计 exam 仍然有效（题目实体存在）的题目数量。
+    """
+    return db.scalar(
+        select(func.count())
+        .select_from(ExamQuestion)
+        .join(Question, Question.id == ExamQuestion.question_id)
+        .where(ExamQuestion.exam_id == exam_id)
+    ) or 0
+
+
+def _cleanup_study_tasks_for_exam(db: Session, exam_id: int) -> None:
+    """
+    清理来源于指定考试的学习计划与学习任务，避免学生端残留无效待办。
+    """
+    plan_ids = db.scalars(select(StudyPlan.id).where(StudyPlan.source_exam_id == exam_id)).all()
+    if not plan_ids:
+        return
+    db.query(StudyTask).filter(StudyTask.plan_id.in_(plan_ids)).delete(synchronize_session=False)
+    db.query(StudyPlan).filter(StudyPlan.id.in_(plan_ids)).delete(synchronize_session=False)

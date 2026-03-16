@@ -2029,3 +2029,37 @@ events 子项结构：
 - OpenAPI 3.0 YAML 或 JSON 规范文件
 - 数据库表结构设计文档
 - FastAPI 路由、Schema、Service 对应关系说明
+## 学生端分析与档案接口 (新增)
+
+### 获取拥有的知识图谱数据
+*   **Endpoint:** `GET /student/knowledge-map`
+*   **Tags:** `Student`
+*   **Query Parameters:**
+    *   `subject` (optional, string): 学科筛选 (如: 数学)
+*   **Response:**
+    *   `200 OK`: 返回知识图谱点及其掌握程度。
+    *   `data`: `{ "nodes": [ { "id": "函数", "mastery": 80 }, ... ] }`
+
+### 获取学习任务
+*   **Endpoint:** `GET /student/study-tasks`
+*   **Tags:** `Student`
+*   **Response:**
+    *   `200 OK`: 待完成的复习或学习任务。
+    *   `data`: `{ "tasks": [ { "id": "1", "title": "...", "type": "weakness_review", "priority": "high" } ] }`
+
+### 获取成长趋势
+*   **Endpoint:** `GET /student/growth-trend`
+*   **Tags:** `Student`
+*   **Query Parameters:**
+    *   `subject` (optional, string): 学科筛选 (如: 英语)
+*   **Response:**
+    *   `200 OK`: 过去考试得分和能力的趋势数据。
+    *   `data`: `{ "history": [ { "date": "2024-03", "score": 85 }, ... ] }`
+
+### 获取所属班级及教师信息
+*   **Endpoint:** `GET /student/classes`
+*   **Tags:** `Student`
+*   **Response:**
+    *   `200 OK`: 学生加入的班级列表及任课教师。
+    *   `data`: `{ "classes": [ { "class_id": 1, "name": "高三一班", "subject": "数学", "teacher_name": "张老师", "grade_name": "高三" } ] }`
+

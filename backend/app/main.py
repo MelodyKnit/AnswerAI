@@ -34,7 +34,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-uploads_dir = Path(__file__).resolve().parents[2] / "data" / "uploads"
+uploads_dir = Path(__file__).resolve().parents[1] / "data" / "uploads"
 uploads_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 

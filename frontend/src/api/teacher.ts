@@ -6,6 +6,19 @@ export interface TeacherDashboardOverview {
   risk_student_count: number
   avg_score_trend: Array<{ exam_id: number, avg_score: number }>
   ai_class_summary: string
+  risk_students?: Array<{
+    student_id: number
+    student_name: string
+    class_name?: string | null
+    exam_id: number
+    exam_title?: string | null
+    latest_score: number
+    correct_rate: number
+    risk_level: 'high' | 'medium' | 'low' | string
+    weak_abilities: string[]
+    weak_knowledge_points: string[]
+    coaching_suggestions: string[]
+  }>
 }
 
 export const getTeacherDashboardOverview = (params?: { subject?: string }) => {
@@ -49,6 +62,14 @@ export const getQuestions = (params?: {
   knowledge_point_id?: number, keyword?: string, page?: number, page_size?: number
 }) => {
   return http.get('/teacher/questions', { params })
+}
+
+export const getQuestionSubjects = () => {
+  return http.get('/teacher/questions/subjects')
+}
+
+export const getQuestionDetail = (question_id: number) => {
+  return http.get('/teacher/questions/detail', { params: { question_id } })
 }
 
 export const createQuestion = (data: any) => {
@@ -119,6 +140,10 @@ export const evaluateExamByAi = (exam_id: number) => {
   return http.post('/teacher/exams/ai-evaluate', { exam_id })
 }
 
+export const assembleExamByAi = (data: { subject: string, requirement: string, exclude_question_ids?: number[] }) => {
+  return http.post('/teacher/exams/ai-assemble', data)
+}
+
 // --- 9. 阅卷与评分接口 ---
 
 export const getObjectiveScore = (params: { exam_id: number, submission_id: number }) => {
@@ -130,7 +155,23 @@ export const triggerAiScore = (data: { exam_id: number, submission_id: number })
 }
 
 export const getReviewItems = (params: { exam_id: number, review_status?: string, page?: number, page_size?: number }) => {
-  return http.get('/teacher/review/items', { params })
+  const safeParams = {
+    ...params,
+    page_size: Math.min(100, Math.max(1, Number(params.page_size || 20))),
+  }
+  return http.get('/teacher/review/items', { params: safeParams })
+}
+
+export const getReviewTasks = (params?: { view?: 'all' | 'pending' | 'completed', page?: number, page_size?: number }) => {
+  return http.get('/teacher/review/tasks', { params })
+}
+
+export const getRetakeRequests = (params?: { status?: string, page?: number, page_size?: number }) => {
+  return http.get('/teacher/review/retake-requests', { params })
+}
+
+export const reviewRetakeRequest = (data: { request_id: number, action: 'approve' | 'reject', comment?: string }) => {
+  return http.post('/teacher/review/retake-requests/action', data)
 }
 
 export const submitReview = (data: { review_item_id: number, final_score: number, review_comment?: string }) => {

@@ -1,10 +1,15 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { RouterView, useRoute } from 'vue-router'
 import { Bell, ChevronRight, LogOut, Shield, User } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
+
+const isSettingsHome = computed(() => route.path === '/app/teacher/settings')
 
 const goToProfile = () => router.push('/app/teacher/settings/profile')
 const goToNotification = () => router.push('/app/teacher/settings/notifications')
@@ -19,7 +24,8 @@ const handleLogout = () => {
 </script>
 
 <template>
-  <div class="settings-home">
+  <div class="settings-shell">
+    <div v-if="isSettingsHome" class="settings-home">
     <header class="page-header">
       <h1 class="page-title">设置</h1>
       <p class="page-subtitle">点击进入对应页面进行详细设置。</p>
@@ -63,10 +69,18 @@ const handleLogout = () => {
       <LogOut :size="16" />
       退出登录
     </button>
+    </div>
+
+    <RouterView v-else />
   </div>
 </template>
 
 <style scoped>
+.settings-shell {
+  display: flex;
+  flex-direction: column;
+}
+
 .settings-home {
   display: flex;
   flex-direction: column;

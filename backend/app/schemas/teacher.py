@@ -68,6 +68,12 @@ class AIQuestionGenerateRequest(BaseModel):
     with_analysis: bool = True
 
 
+class AIExamAssembleRequest(BaseModel):
+    subject: str
+    requirement: str
+    exclude_question_ids: list[int] = []
+
+
 class AIQuestionReviewRequest(BaseModel):
     question_id: int
 
@@ -85,6 +91,7 @@ class ExamCreateRequest(BaseModel):
     duration_minutes: int
     start_time: datetime
     end_time: datetime
+    publish_now: bool = False
     instructions: str | None = None
     allow_review: bool = True
     random_question_order: bool = False
@@ -118,3 +125,9 @@ class ReviewSubmitRequest(BaseModel):
 class AIScoreRequest(BaseModel):
     exam_id: int
     submission_id: int
+
+
+class RetakeRequestActionRequest(BaseModel):
+    request_id: int
+    action: str
+    comment: str | None = None
