@@ -1,17 +1,15 @@
-from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from app.api.deps import require_role
+from app.core.config import UPLOADS_DIR
 from app.core.response import success_response
 from app.models.user import User
 
 router = APIRouter()
 
-BASE_DIR = Path(__file__).resolve().parents[3]
-UPLOAD_DIR = BASE_DIR / "data" / "uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_CONTENT_TYPES = {
     "image/jpeg": ".jpg",
@@ -41,7 +39,7 @@ async def upload_image(
 
     ext = ALLOWED_CONTENT_TYPES[content_type]
     filename = f"{uuid4().hex}{ext}"
-    file_path = UPLOAD_DIR / filename
+    file_path = UPLOADS_DIR / filename
 
     file_bytes = await file.read()
     if not file_bytes:

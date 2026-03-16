@@ -1,0 +1,10 @@
+请按以下要求生成题目，并严格返回 JSON。
+返回格式：{"questions":[{"subject":str,"type":str,"stem":str,"options":[],"answer":str|list,"analysis":str}]}
+学科：{{ subject }}
+年级：{{ grade_name }}
+题型：{{ question_type }}
+知识点：{{ knowledge_points_text }}
+难度：{{ difficulty }}
+数量：{{ count }}
+附加要求：{{ requirement }}
+注意：选择题请给 options（A/B/C/D）；判断题 answer 为 TRUE 或 FALSE；填空题 answer 用数组。

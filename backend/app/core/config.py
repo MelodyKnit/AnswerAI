@@ -8,6 +8,8 @@ from pydantic_settings import SettingsConfigDict, BaseSettings
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BASE_DIR / "data"
+UPLOADS_DIR = DATA_DIR / "uploads"
+PROMPTS_DIR = BASE_DIR / "prompts"
 APP_ENV = os.getenv("APP_ENV", "dev").lower()
 ENV_FILES = {
     "dev": BASE_DIR / ".env.dev",

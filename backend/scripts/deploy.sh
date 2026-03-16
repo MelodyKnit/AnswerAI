@@ -33,7 +33,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+BASE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 step() {
     echo "==> $1"
@@ -46,7 +46,7 @@ assert_command() {
     fi
 }
 
-cd "$BACKEND_DIR"
+cd "$BASE_DIR"
 assert_command poetry
 
 if [[ -n "$PYTHON_EXECUTABLE" ]]; then

@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$backendDir = Resolve-Path (Join-Path $scriptDir "..")
+$baseDir = Resolve-Path (Join-Path $scriptDir "..")
 
 function Invoke-Step {
     param(
@@ -28,7 +28,7 @@ function Assert-Command {
     }
 }
 
-Set-Location $backendDir
+Set-Location $baseDir
 Assert-Command -Name "poetry"
 
 if ($PythonExecutable) {

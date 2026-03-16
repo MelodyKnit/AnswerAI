@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.services.ai_client import request_chat_completion
+from app.services.prompt_loader import render_prompt
 
 
 @dataclass(frozen=True)
@@ -430,11 +431,10 @@ def _try_refine_with_llm(payload: dict[str, Any]) -> dict[str, Any] | None:
     if not settings.llm_configs:
         return None
 
-    prompt = (
-        "你是学习分析助手。请基于给定 JSON，输出更可执行的中文总结和行动建议。"
-        "必须只输出 JSON，格式为{\"ai_summary\":str,\"ai_actions\":[str,...]}。"
-        "禁止编造书籍，不要改动书籍列表。行动建议要短句、可落地。\n"
-        f"输入JSON：{json.dumps(payload, ensure_ascii=False)}"
+    system_prompt = render_prompt("student_growth_refine_system.jinja")
+    user_prompt = render_prompt(
+        "student_growth_refine_user.jinja",
+        payload_json=json.dumps(payload, ensure_ascii=False),
     )
 
     for cfg in settings.llm_configs:
@@ -442,8 +442,8 @@ def _try_refine_with_llm(payload: dict[str, Any]) -> dict[str, Any] | None:
             content = request_chat_completion(
                 cfg=cfg,
                 scene="student_growth_profile_refine",
-                system_prompt="你是严谨的学习成长分析助手，只输出 JSON。",
-                user_prompt=prompt,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 temperature=0.3,
             )
             data = _extract_json(content)

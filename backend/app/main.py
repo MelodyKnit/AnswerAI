@@ -1,13 +1,12 @@
 from contextlib import asynccontextmanager
 import logging
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router, ws_router
-from app.core.config import settings
+from app.core.config import UPLOADS_DIR, settings
 from app.core.response import success_response
 from app.db.init_db import seed_subjects
 from app.db.session import SessionLocal
@@ -38,9 +37,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-uploads_dir = Path(__file__).resolve().parents[1] / "data" / "uploads"
-uploads_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 
 @app.get("/health")

@@ -5,6 +5,7 @@ from typing import Any
 from app.core.config import settings
 from app.schemas.teacher import AIQuestionGenerateRequest
 from app.services.ai_client import request_chat_completion
+from app.services.prompt_loader import render_prompt
 
 
 def generate_questions_with_llm(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
@@ -36,12 +37,12 @@ def _call_single_model(cfg, payload: AIQuestionGenerateRequest) -> list[dict[str
     """
     处理  call single model 请求并返回结果。
     """
-    prompt = _build_prompt(payload)
+    system_prompt, user_prompt = _build_prompts(payload)
     content = request_chat_completion(
         cfg=cfg,
         scene="teacher_question_generate",
-        system_prompt="你是严谨的中小学出题助手，只输出 JSON。",
-        user_prompt=prompt,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
         temperature=0.4,
     )
     data = _extract_json(content)
@@ -51,25 +52,24 @@ def _call_single_model(cfg, payload: AIQuestionGenerateRequest) -> list[dict[str
     return questions
 
 
-def _build_prompt(payload: AIQuestionGenerateRequest) -> str:
+def _build_prompts(payload: AIQuestionGenerateRequest) -> tuple[str, str]:
     """
-    处理  build prompt 请求并返回结果。
+    渲染出题 system/user 提示词模板。
     """
     kp_text = "、".join(payload.knowledge_points) if payload.knowledge_points else "综合能力"
     difficulty = payload.difficulty if payload.difficulty is not None else 0.5
-    return (
-        "请按以下要求生成题目，并严格返回 JSON。\n"
-        "返回格式：{\"questions\":[{\"subject\":str,\"type\":str,\"stem\":str,\"options\":[],\"answer\":str|list,\"analysis\":str}]}\n"
-        f"学科：{payload.subject}\n"
-        f"年级：{payload.grade_name or '不限'}\n"
-        f"题型：{payload.question_type}\n"
-        f"知识点：{kp_text}\n"
-        f"难度：{difficulty}\n"
-        f"数量：{max(1, payload.count)}\n"
-        f"附加要求：{payload.requirement}\n"
-        "注意：选择题请给 options（A/B/C/D）；判断题 answer 为 TRUE 或 FALSE；"
-        "填空题 answer 用数组。"
+    system_prompt = render_prompt("question_generate_system.jinja")
+    user_prompt = render_prompt(
+        "question_generate_user.jinja",
+        subject=payload.subject,
+        grade_name=payload.grade_name or "不限",
+        question_type=payload.question_type,
+        knowledge_points_text=kp_text,
+        difficulty=difficulty,
+        count=max(1, payload.count),
+        requirement=payload.requirement or "无",
     )
+    return system_prompt, user_prompt
 
 
 def _extract_json(raw: str) -> Any:

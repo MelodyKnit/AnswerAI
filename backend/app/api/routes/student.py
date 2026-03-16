@@ -19,6 +19,7 @@ from app.models.user import AITask, ReviewItem, StudyPlan, StudyTask, User
 from app.schemas.student import BatchSaveAnswerRequest, BehaviorReportRequest, SaveAnswerRequest, StartExamRequest, StudentAIFollowUpRequest, StudentRetakeRequestCreate, StudyTaskActionRequest, SubmitExamRequest
 from app.services.learning import build_submission_analysis, generate_study_plan
 from app.services.ai_client import request_chat_completion
+from app.services.prompt_loader import render_prompt
 from app.services.realtime import realtime_events, submission_channel
 from app.services.scoring import OBJECTIVE_TYPES, SUBJECTIVE_TYPES, compute_objective_score, parse_answer, serialize_answer
 from app.services.student_growth_ai import build_growth_ability_profile
@@ -765,15 +766,15 @@ def student_ai_follow_up(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="messages is required")
 
     latest_user_question = normalized_msgs[-1].content.strip()
-    prompt = (
-        "你是中学学习辅导助手。请围绕当前题目给出简短但具体的回答，控制在120字以内。"
-        "先指出关键点，再给一个可执行动作。不要空话。\n"
-        f"题型：{question.type}\n"
-        f"题干：{(question.stem or '')[:200]}\n"
-        f"学生答案：{student_answer}\n"
-        f"标准答案：{standard_answer}\n"
-        f"题目解析：{(question.analysis or '')[:200]}\n"
-        f"学生追问：{latest_user_question}"
+    system_prompt = render_prompt("student_follow_up_system.jinja")
+    user_prompt = render_prompt(
+        "student_follow_up_user.jinja",
+        question_type=question.type,
+        stem=(question.stem or '')[:200],
+        student_answer=student_answer if student_answer is not None else "未作答",
+        standard_answer=standard_answer if standard_answer is not None else "无",
+        analysis=(question.analysis or '')[:200],
+        latest_user_question=latest_user_question,
     )
 
     reply_text = ""
@@ -782,8 +783,8 @@ def student_ai_follow_up(
             reply_text = request_chat_completion(
                 cfg=cfg,
                 scene="student_follow_up_chat",
-                system_prompt="你是耐心且精确的学习辅导助手。",
-                user_prompt=prompt,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
                 temperature=0.2,
             )
             if reply_text:
