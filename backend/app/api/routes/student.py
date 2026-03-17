@@ -693,6 +693,13 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
     if not ability_profile_summary:
         ability_profile_summary = {"审题能力": 0.0, "计算能力": 0.0, "综合应用能力": 0.0}
 
+    knowledge_mastery = _calculate_dashboard_knowledge_mastery(
+        db=db,
+        student_id=current_user.id,
+        now=now,
+        subject=subject,
+    )
+
     response_payload = success_response(
         {
             "upcoming_exam_count": upcoming_count,
@@ -700,6 +707,7 @@ def student_dashboard(subject: str | None = None, current_user: User = Depends(r
             "latest_result_summary": _serialize_submission(latest_submission) if latest_submission else None,
             "ai_reminders": ["建议优先复习最近一次考试中的高频错题。"],
             "ability_profile_summary": ability_profile_summary,
+            "knowledge_mastery": knowledge_mastery,
             "recommended_tasks": [{"task_id": item.id, "title": item.title, "priority": item.priority} for item in recommended_tasks],
         }
     )
@@ -720,6 +728,122 @@ def _maybe_cleanup_invalid_study_artifacts_for_student(db: Session, student_id: 
         return
     _cleanup_invalid_study_artifacts_for_student(db, student_id)
     _study_artifact_cleanup_cache[student_id] = now
+
+
+def _calculate_dashboard_knowledge_mastery(
+    db: Session,
+    student_id: int,
+    now: datetime,
+    subject: str | None = None,
+) -> dict[str, Any]:
+    """
+    计算学生首页“知识点掌握度”。
+
+    计算规则：
+    1) 单知识点掌握率 = 加权正确题数 / 加权总题数
+    2) 权重按作答新鲜度分层：14天内=1.2，15~30天=1.1，30天外=1.0
+    3) 总掌握度 = 各知识点掌握率的平均值
+    """
+    completed_statuses = {"submitted", "completed", "reviewed"}
+
+    query = (
+        select(
+            QuestionKnowledgePoint.knowledge_point_id,
+            KnowledgePoint.name,
+            SubmissionAnswer.is_correct,
+            SubmissionAnswer.updated_at,
+        )
+        .select_from(SubmissionAnswer)
+        .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+        .join(
+            QuestionKnowledgePoint,
+            QuestionKnowledgePoint.question_id == SubmissionAnswer.question_id,
+        )
+        .join(KnowledgePoint, KnowledgePoint.id == QuestionKnowledgePoint.knowledge_point_id)
+        .where(
+            ExamSubmission.student_id == student_id,
+            ExamSubmission.status.in_(completed_statuses),
+            SubmissionAnswer.is_correct.is_not(None),
+        )
+    )
+
+    if subject:
+        query = query.join(Question, Question.id == SubmissionAnswer.question_id).join(
+            Subject, Subject.id == Question.subject_id
+        ).where(Subject.name == subject)
+
+    rows = db.execute(query).all()
+    if not rows:
+        return {
+            "percent": 0,
+            "knowledge_point_count": 0,
+            "answer_count": 0,
+            "formula": {
+                "overall": "总掌握度 = 各知识点掌握率平均值",
+                "per_point": "单知识点掌握率 = 加权正确题数 / 加权总题数",
+                "weight": "14天内权重1.2，15~30天权重1.1，30天外权重1.0",
+            },
+            "breakdown": [],
+        }
+
+    stats: dict[int, dict[str, Any]] = {}
+    for knowledge_point_id, name, is_correct, updated_at in rows:
+        kp_id = int(knowledge_point_id)
+        if kp_id not in stats:
+            stats[kp_id] = {
+                "knowledge_point_id": kp_id,
+                "name": str(name or "未命名知识点"),
+                "weighted_total": 0.0,
+                "weighted_correct": 0.0,
+                "total": 0,
+                "correct": 0,
+            }
+
+        dt = _as_utc(updated_at) if isinstance(updated_at, datetime) else now
+        age_days = max(0, (now - dt).days)
+        if age_days <= 14:
+            weight = 1.2
+        elif age_days <= 30:
+            weight = 1.1
+        else:
+            weight = 1.0
+
+        stats[kp_id]["weighted_total"] += weight
+        stats[kp_id]["total"] += 1
+        if is_correct is True:
+            stats[kp_id]["weighted_correct"] += weight
+            stats[kp_id]["correct"] += 1
+
+    breakdown: list[dict[str, Any]] = []
+    for item in stats.values():
+        weighted_total = float(item["weighted_total"] or 0)
+        mastery = (float(item["weighted_correct"]) / weighted_total) if weighted_total > 0 else 0.0
+        breakdown.append(
+            {
+                "knowledge_point_id": item["knowledge_point_id"],
+                "name": item["name"],
+                "mastery_percent": round(mastery * 100),
+                "correct": int(item["correct"]),
+                "total": int(item["total"]),
+            }
+        )
+
+    breakdown.sort(key=lambda x: (x["mastery_percent"], x["total"]))
+    overall = round(
+        sum(float(item["mastery_percent"]) for item in breakdown) / max(1, len(breakdown))
+    )
+
+    return {
+        "percent": int(overall),
+        "knowledge_point_count": len(breakdown),
+        "answer_count": len(rows),
+        "formula": {
+            "overall": "总掌握度 = 各知识点掌握率平均值",
+            "per_point": "单知识点掌握率 = 加权正确题数 / 加权总题数",
+            "weight": "14天内权重1.2，15~30天权重1.1，30天外权重1.0",
+        },
+        "breakdown": breakdown[:8],
+    }
 
 
 @router.get("/student/results/overview")

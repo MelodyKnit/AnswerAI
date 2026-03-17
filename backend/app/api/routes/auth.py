@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -27,15 +28,17 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     """
     existing = db.scalar(select(User).where(User.email == payload.email))
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该邮箱已被注册")
 
     existing_username = db.scalar(select(User).where(User.username == payload.username))
     if existing_username:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already registered")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该用户名已被占用")
 
     if payload.role == "teacher":
-        if not payload.teacher_invite_code or payload.teacher_invite_code.strip() != settings.teacher_invite_code:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid teacher invite code")
+        invite_code = (payload.teacher_invite_code or "").strip()
+        # 教师邀请码为可选：仅当用户填写后才执行校验。
+        if invite_code and invite_code != settings.teacher_invite_code:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="组织机构代码无效，请检查后重试")
 
     user = User(
         role=payload.role,
@@ -49,7 +52,16 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         status="active",
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        message = str(exc).lower()
+        if "users.email" in message or "email" in message:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该邮箱已被注册")
+        if "users.username" in message or "username" in message:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该用户名已被占用")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="注册失败，请稍后重试")
     db.refresh(user)
 
     if payload.role == "student" and payload.class_code:
@@ -83,7 +95,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     """
     user = db.scalar(select(User).where((User.email == payload.login_id) | (User.username == payload.login_id)))
     if not user or not verify_password(payload.password, user.password_hash):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email/username or password")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号或密码错误")
 
     user.last_login_at = datetime.now(UTC)
     db.add(user)
@@ -121,7 +133,7 @@ def update_profile(payload: ProfileUpdateRequest, current_user: User = Depends(g
     # 用户名一旦设置后不可修改。
     next_username = update_data.get("username")
     if next_username is not None and next_username != current_user.username:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username cannot be modified once set")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="用户名一旦设置后不可修改")
     update_data.pop("username", None)
 
     # 学生只允许更新与个人身份直接相关的信息，禁止修改学校/年级。
@@ -133,12 +145,19 @@ def update_profile(payload: ProfileUpdateRequest, current_user: User = Depends(g
     if next_email and next_email != current_user.email:
         existing = db.scalar(select(User).where(User.email == next_email, User.id != current_user.id))
         if existing:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该邮箱已被注册")
 
     for field, value in update_data.items():
         setattr(current_user, field, value)
     db.add(current_user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        message = str(exc).lower()
+        if "users.email" in message or "email" in message:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该邮箱已被注册")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="更新失败，请稍后重试")
     db.refresh(current_user)
     return success_response({"user": _serialize_user(current_user)})
 
@@ -149,7 +168,7 @@ def change_password(payload: ChangePasswordRequest, current_user: User = Depends
     处理 change password 请求并返回结果。
     """
     if not verify_password(payload.old_password, current_user.password_hash):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Old password is incorrect")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="旧密码不正确")
     current_user.password_hash = get_password_hash(payload.new_password)
     db.add(current_user)
     db.commit()

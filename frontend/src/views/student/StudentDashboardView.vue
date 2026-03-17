@@ -3,12 +3,42 @@ import { ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ChevronRight, Target, Clock, AlertCircle, BarChart2 } from 'lucide-vue-next'    
 import { useAuthStore } from '@/stores/auth'
+import { useUiDialog } from '@/composables/useUiDialog'
 import http from '@/lib/http'
 
 const authStore = useAuthStore()
+const ui = useUiDialog()
 
 const dashboardData = ref<any>(null)
 const loading = ref(true)
+
+const showKnowledgeMasteryExplain = async () => {
+  const mastery = dashboardData.value?.knowledge_mastery || {}
+  const formula = mastery?.formula || {}
+  const breakdown = Array.isArray(mastery?.breakdown) ? mastery.breakdown : []
+  const topLines = breakdown
+    .slice(0, 5)
+    .map((item: any) => `- ${item.name}: ${item.mastery_percent}%（${item.correct}/${item.total}）`)
+    .join('\n')
+
+  const message = [
+    `当前知识点掌握度：${Number(mastery?.percent || 0)}%`,
+    '',
+    '计算方式：',
+    `1. ${formula?.per_point || '单知识点掌握率 = 正确题数 / 总题数'}`,
+    `2. ${formula?.overall || '总掌握度 = 各知识点掌握率平均值'}`,
+    `3. ${formula?.weight || '默认等权统计'}`,
+    '',
+    `统计范围：${Number(mastery?.knowledge_point_count || 0)} 个知识点，${Number(mastery?.answer_count || 0)} 条作答记录。`,
+    topLines ? `\n样例明细（按薄弱优先）：\n${topLines}` : '',
+  ].filter(Boolean).join('\n')
+
+  await ui.alert(message, {
+    title: '知识点掌握度说明',
+    confirmText: '我知道了',
+    tone: 'info',
+  })
+}
 
 onMounted(async () => {
   try {
@@ -55,13 +85,14 @@ onMounted(async () => {
         </div>
         <div class="stat-value">{{ dashboardData?.upcoming_exam_count || 0 }}</div>
       </div>
-      <div class="stat-card">
+      <button class="stat-card stat-card--interactive" @click="showKnowledgeMasteryExplain">
         <div class="stat-header">
           <BarChart2 :size="16" class="stat-icon" />
           <span class="stat-label">知识点掌握度</span>
         </div>
-        <div class="stat-value">68<span class="text-sm font-normal text-ink-soft ml-1">%</span></div>
-      </div>
+        <div class="stat-value">{{ Number(dashboardData?.knowledge_mastery?.percent || 0) }}<span class="text-sm font-normal text-ink-soft ml-1">%</span></div>
+        <div class="stat-tip">点击查看计算方式</div>
+      </button>
     </section>
 
     <!-- Action Cards -->
@@ -248,6 +279,23 @@ onMounted(async () => {
   flex-direction: column;
   gap: 12px;
   box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
+
+.stat-card--interactive {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.stat-card--interactive:hover {
+  border-color: #c4d8ff;
+  box-shadow: 0 6px 18px rgba(29, 78, 216, 0.08);
+}
+
+.stat-tip {
+  font-size: 12px;
+  color: var(--ink-soft);
 }
 
 .stat-header {

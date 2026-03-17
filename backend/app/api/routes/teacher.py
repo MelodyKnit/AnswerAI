@@ -1435,6 +1435,9 @@ def get_question_detail(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Question not found"
         )
+
+    question_id = int(question.id)
+    question_subject_id = int(question.subject_id)
     return success_response({"question": _serialize_question(db, question)})
 
 
@@ -2269,6 +2272,7 @@ def update_exam(
     更新已有的 exam 记录。
     """
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
+    exam_id = int(exam.id)
     data = payload.model_dump(exclude_none=True)
     class_ids = data.pop("class_ids", None)
     question_items = data.pop("question_items", None)

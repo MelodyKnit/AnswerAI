@@ -46,6 +46,7 @@ const handleSubmit = async () => {
         password: form.value.password
       })
     } else {
+      const normalizedCode = form.value.code.trim()
       await authStore.register({
         role: activeRole.value,
         name: form.value.name,
@@ -53,7 +54,9 @@ const handleSubmit = async () => {
         email: form.value.email,
         password: form.value.password,
         confirm_password: form.value.confirmPassword,
-        ...(activeRole.value === 'student' ? { class_code: form.value.code } : { teacher_invite_code: form.value.code })
+        ...(activeRole.value === 'student'
+          ? (normalizedCode ? { class_code: normalizedCode } : {})
+          : (normalizedCode ? { teacher_invite_code: normalizedCode } : {}))
       })
     }
     

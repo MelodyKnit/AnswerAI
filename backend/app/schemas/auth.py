@@ -20,9 +20,9 @@ class RegisterRequest(BaseModel):
         处理 validate username and password 请求并返回结果。
         """
         if not any(ch.isalpha() for ch in self.username):
-            raise ValueError("Username must contain letters and can include numbers")
+            raise ValueError("用户名必须包含英文字母，可使用英文+数字组合")
         if self.password != self.confirm_password:
-            raise ValueError("Password and confirm password do not match")
+            raise ValueError("两次输入的密码不一致")
         return self
 
 
@@ -45,7 +45,7 @@ class ProfileUpdateRequest(BaseModel):
     @model_validator(mode="after")
     def validate_username_immutable(self):
         if self.username is not None:
-            raise ValueError("Username cannot be modified once set")
+            raise ValueError("用户名一旦设置后不可修改")
         return self
 
 
