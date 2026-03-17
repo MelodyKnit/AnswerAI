@@ -39,6 +39,11 @@ const normalizeAssetUrl = (rawUrl: string) => {
   if (trimmed.startsWith('/')) {
     return backendOrigin ? `${backendOrigin}${trimmed}` : trimmed
   }
+  // 兼容导入题库中的裸文件名，如 t288.png
+  if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(trimmed)) {
+    const path = `/uploads/subject-import/${trimmed.replace(/^\/+/, '')}`
+    return backendOrigin ? `${backendOrigin}${path}` : path
+  }
   return backendOrigin ? `${backendOrigin}/${trimmed.replace(/^\/+/, '')}` : trimmed
 }
 
@@ -51,9 +56,39 @@ const escapeHtml = (value: string) => {
     .replace(/'/g, '&#39;')
 }
 
-const renderRichText = (value?: string) => {
-  if (!value) return ''
-  const escaped = escapeHtml(value)
+const renderFromRichBlocks = (raw: string) => {
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return ''
+  try {
+    const blocks = JSON.parse(trimmed)
+    if (!Array.isArray(blocks)) return ''
+    return blocks
+      .map((item: any) => {
+        const blockType = String(item?.type || '').toLowerCase()
+        const blockContent = String(item?.content || '')
+        if (blockType === 'image') {
+          const src = normalizeAssetUrl(blockContent)
+          return src ? `<img class="preview-rich-image" src="${src}" alt="题目插图" />` : ''
+        }
+        return `<span class="preview-rich-text">${escapeHtml(blockContent)}</span>`
+      })
+      .filter(Boolean)
+      .join('')
+  } catch {
+    return ''
+  }
+}
+
+const renderRichText = (value?: unknown) => {
+  const raw = String(value ?? '')
+  if (!raw.trim()) return ''
+
+  const fromBlocks = renderFromRichBlocks(raw)
+  if (fromBlocks) {
+    return fromBlocks
+  }
+
+  const escaped = escapeHtml(raw)
   return escaped
     .replace(/!\[[^\]]*\]\(([^)]+)\)/g, (_, src) => {
       const normalized = normalizeAssetUrl(String(src || ''))
