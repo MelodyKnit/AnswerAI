@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, BookOpen, CheckCircle2, Clock3, Sparkles, Target } from 'lucide-vue-next'
 import http from '@/lib/http'
 import { mapStudyTaskTypeLabel } from '@/utils/studyTask'
+import { useUiDialog } from '@/composables/useUiDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +18,7 @@ const stepChecked = ref<Record<string, boolean>>({})
 const reflection = ref('')
 const revealState = ref<Record<string, boolean>>({})
 const masteryState = ref<Record<string, 'mastered' | 'unmastered'>>({})
+const ui = useUiDialog()
 
 const formatAnswer = (value: any) => {
   if (Array.isArray(value)) return value.join('、')
@@ -137,7 +139,7 @@ const pauseTask = async () => {
     router.push('/app/student/study-plan')
   } catch (error) {
     console.error('暂停复习任务失败', error)
-    alert('暂停失败，请稍后重试')
+    await ui.alert('暂停失败，请稍后重试', { tone: 'error' })
   } finally {
     saving.value = false
   }
@@ -155,7 +157,7 @@ const completeTask = async () => {
     router.push('/app/student/study-plan')
   } catch (error) {
     console.error('完成复习任务失败', error)
-    alert('提交复盘失败，请稍后重试')
+    await ui.alert('提交复盘失败，请稍后重试', { tone: 'error' })
   } finally {
     saving.value = false
   }
@@ -166,7 +168,7 @@ onMounted(async () => {
     await loadTask()
   } catch (error: any) {
     console.error('加载复习任务失败', error)
-    alert(error?.message || '加载复习任务失败')
+    await ui.alert(error?.message || '加载复习任务失败', { tone: 'error' })
     router.push('/app/student/study-plan')
   } finally {
     loading.value = false

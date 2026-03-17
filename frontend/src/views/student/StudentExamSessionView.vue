@@ -2,6 +2,7 @@
 import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Clock, ChevronLeft, ChevronRight, Check } from 'lucide-vue-next'
+import { useUiDialog } from '@/composables/useUiDialog'
 import http from '@/lib/http'
 import ImageLightbox from '@/components/common/ImageLightbox.vue'
 
@@ -21,6 +22,7 @@ const lightboxAlt = ref('题目插图')
 const isAnswerSheetOpen = ref(false)
 const questionEnterAt = ref(Date.now())
 const paperLoaded = ref(false)
+const ui = useUiDialog()
 let countdownTimer: number | null = null
 
 const currentQuestion = computed(() => questions.value[currentIndex.value] || null)
@@ -174,7 +176,7 @@ onMounted(async () => {
     })
   } catch (error) {
     console.error('Failed to load exam paper:', error)
-    alert('无法加载试卷数据，可能该考试已提交或已结束。')
+    await ui.alert('无法加载试卷数据，可能该考试已提交或已结束。', { tone: 'error' })
     router.replace(`/app/student/results/${examId}`)
   } finally {
     loading.value = false
@@ -248,7 +250,14 @@ const prevQuestion = async () => {
 }
 
 const submitExam = async (forced = false) => {
-  if (!forced && !confirm('确定要交卷吗？')) return
+  if (!forced) {
+    const confirmed = await ui.confirm('确定要交卷吗？', {
+      title: '提交试卷',
+      confirmText: '确认交卷',
+      tone: 'warning',
+    })
+    if (!confirmed) return
+  }
   
   await saveCurrentAnswer()
   submitting.value = true
@@ -266,7 +275,7 @@ const submitExam = async (forced = false) => {
     router.replace(`/app/student/results/${examId}`)
   } catch (error) {
     console.error('Submit failed', error)
-    alert(forced ? '自动交卷失败，请立即手动交卷' : '交卷失败，请重试')
+    await ui.alert(forced ? '自动交卷失败，请立即手动交卷' : '交卷失败，请重试', { tone: 'error' })
     submitting.value = false
   }
 }

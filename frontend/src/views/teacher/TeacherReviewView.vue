@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CheckCircle, AlertCircle, ChevronRight } from 'lucide-vue-next'
+import { useUiDialog } from '@/composables/useUiDialog'
 import { getReviewItems, getReviewTasks, submitReview } from '@/api/teacher'
 
 const router = useRouter()
@@ -14,6 +15,7 @@ const submissionOverview = ref<any[]>([])
 const scoreDraft = ref<Record<number, number>>({})
 const commentDraft = ref<Record<number, string>>({})
 const submittingReviewId = ref<number | null>(null)
+const ui = useUiDialog()
 
 const currentExamId = computed(() => Number(route.params.id || 0))
 const isExamReviewMode = computed(() => route.name === 'teacher-review' && currentExamId.value > 0)
@@ -60,7 +62,7 @@ const submitOneReview = async (item: any) => {
   const reviewItemId = Number(item.id)
   const finalScore = Number(scoreDraft.value[reviewItemId])
   if (Number.isNaN(finalScore)) {
-    alert('请输入有效分数')
+    await ui.alert('请输入有效分数', { tone: 'warning' })
     return
   }
   try {
@@ -72,7 +74,7 @@ const submitOneReview = async (item: any) => {
     })
     await fetchReviewData()
   } catch (error: any) {
-    alert(error?.message || '提交批阅失败，请稍后重试')
+    await ui.alert(error?.message || '提交批阅失败，请稍后重试', { tone: 'error' })
   } finally {
     submittingReviewId.value = null
   }

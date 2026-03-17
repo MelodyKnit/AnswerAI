@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
+import GlobalFeedbackHost from '@/components/common/GlobalFeedbackHost.vue'
 </script>
 
 <template>
@@ -8,4 +9,5 @@ import { RouterView } from 'vue-router'
       <component :is="Component" :key="route.fullPath" />
     </Transition>
   </RouterView>
+  <GlobalFeedbackHost />
 </template>

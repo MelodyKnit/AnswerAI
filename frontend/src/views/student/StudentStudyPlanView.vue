@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { BookOpen, Clock3, Target, Sparkles, History, X } from 'lucide-vue-next'
 import http from '@/lib/http'
 import { mapStudyTaskTypeLabel } from '@/utils/studyTask'
+import { useUiDialog } from '@/composables/useUiDialog'
 
 const router = useRouter()
 const tasks = ref<any[]>([])
@@ -15,6 +16,7 @@ const activeHistory = ref<any | null>(null)
 const aiOverview = ref<any>(null)
 const aiActions = ref<string[]>([])
 const taskLoading = ref(false)
+const ui = useUiDialog()
 
 const refreshTasks = async () => {
   const res: any = await http.get('/student/study-tasks')
@@ -64,7 +66,11 @@ const closeHistory = () => {
 }
 
 const ignoreTask = async (task: any) => {
-  const ok = window.confirm(`确认忽略任务「${task.title}」？你之后仍可通过新计划重新生成。`)
+  const ok = await ui.confirm(`确认忽略任务「${task.title}」？你之后仍可通过新计划重新生成。`, {
+    title: '忽略任务',
+    confirmText: '确认忽略',
+    tone: 'warning',
+  })
   if (!ok) return
   try {
     taskLoading.value = true
@@ -72,14 +78,18 @@ const ignoreTask = async (task: any) => {
     await refreshTasks()
   } catch (error) {
     console.error('忽略任务失败', error)
-    alert('忽略失败，请稍后重试')
+    await ui.alert('忽略失败，请稍后重试', { tone: 'error' })
   } finally {
     taskLoading.value = false
   }
 }
 
 const deleteTask = async (task: any) => {
-  const ok = window.confirm(`确认删除任务「${task.title}」？删除后不可恢复。`)
+  const ok = await ui.confirm(`确认删除任务「${task.title}」？删除后不可恢复。`, {
+    title: '删除任务',
+    confirmText: '确认删除',
+    tone: 'warning',
+  })
   if (!ok) return
   try {
     taskLoading.value = true
@@ -87,7 +97,7 @@ const deleteTask = async (task: any) => {
     await refreshTasks()
   } catch (error) {
     console.error('删除任务失败', error)
-    alert('删除失败，请稍后重试')
+    await ui.alert('删除失败，请稍后重试', { tone: 'error' })
   } finally {
     taskLoading.value = false
   }
@@ -100,7 +110,7 @@ const restoreIgnoredTask = async (task: any) => {
     await refreshTasks()
   } catch (error) {
     console.error('取消忽略失败', error)
-    alert('取消忽略失败，请稍后重试')
+    await ui.alert('取消忽略失败，请稍后重试', { tone: 'error' })
   } finally {
     taskLoading.value = false
   }

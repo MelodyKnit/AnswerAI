@@ -5,6 +5,7 @@ import { createQuestion, deleteQuestion, generateQuestionsByAi, getQuestionSubje
 import { getQuestionTypes } from '@/api/meta'
 import http from '@/lib/http'
 import { useRouter } from 'vue-router'
+import { useUiDialog } from '@/composables/useUiDialog'
 
 type OptionInput = {
   key: string
@@ -62,6 +63,7 @@ const analysisImageInput = ref<HTMLInputElement | null>(null)
 const optionImageInput = ref<HTMLInputElement | null>(null)
 const currentOptionImageIndex = ref<number | null>(null)
 const router = useRouter()
+const ui = useUiDialog()
 
 const uploadImage = (file: File) => {
   const formData = new FormData()
@@ -385,18 +387,18 @@ const buildAnswer = () => {
 
 const submitEditor = async () => {
   if (!form.value.subject || !form.value.type || !form.value.stem.trim()) {
-    alert('请完善科目、题型和题干')
+    await ui.alert('请完善科目、题型和题干', { tone: 'warning' })
     return
   }
 
   if (form.value.type === 'blank') {
     const hasEmptyBlank = form.value.blankAnswers.some((item) => !item.content.trim())
     if (hasEmptyBlank || form.value.blankAnswers.length === 0) {
-      alert('请填写所有填空答案')
+      await ui.alert('请填写所有填空答案', { tone: 'warning' })
       return
     }
   } else if (!form.value.answerText.trim()) {
-    alert('请先选择或填写答案')
+    await ui.alert('请先选择或填写答案', { tone: 'warning' })
     return
   }
 
@@ -407,7 +409,7 @@ const submitEditor = async () => {
     : []
 
   if (isChoiceQuestion.value && options.length < 2) {
-    alert('选择题至少需要两个有效选项')
+    await ui.alert('选择题至少需要两个有效选项', { tone: 'warning' })
     return
   }
 
@@ -437,14 +439,19 @@ const submitEditor = async () => {
     await syncLoadMoreObserver()
   } catch (error) {
     console.error('Failed to save question', error)
-    alert('保存题目失败，请稍后重试')
+    await ui.alert('保存题目失败，请稍后重试', { tone: 'error' })
   } finally {
     isSaving.value = false
   }
 }
 
 const removeQuestion = async (questionId: number) => {
-  if (!window.confirm('确认删除该题目？删除后无法恢复。')) {
+  const confirmed = await ui.confirm('确认删除该题目？删除后无法恢复。', {
+    title: '删除题目',
+    confirmText: '确认删除',
+    tone: 'warning',
+  })
+  if (!confirmed) {
     return
   }
   try {
@@ -454,7 +461,7 @@ const removeQuestion = async (questionId: number) => {
     await syncLoadMoreObserver()
   } catch (error) {
     console.error('Failed to delete question', error)
-    alert('删除题目失败，请稍后重试')
+    await ui.alert('删除题目失败，请稍后重试', { tone: 'error' })
   }
 }
 
@@ -489,7 +496,7 @@ const doUploadAndInsert = async (
     appendMarkdownImage(target, imageUrl)
   } catch (error) {
     console.error('Upload image failed', error)
-    alert('图片上传失败，请稍后重试')
+    await ui.alert('图片上传失败，请稍后重试', { tone: 'error' })
   }
 }
 
@@ -584,11 +591,11 @@ const applyGeneratedQuestion = (generated: any) => {
 
 const generateByAiAndApply = async () => {
   if (!form.value.subject || !form.value.type) {
-    alert('请先选择科目和题型')
+    await ui.alert('请先选择科目和题型', { tone: 'warning' })
     return
   }
   if (!aiRequirement.value.trim()) {
-    alert('请输入 AI 出题要求')
+    await ui.alert('请输入 AI 出题要求', { tone: 'warning' })
     return
   }
 
@@ -606,14 +613,14 @@ const generateByAiAndApply = async () => {
     })
     const generatedList = (res as any).questions || []
     if (!generatedList.length) {
-      alert('AI 未生成题目，请调整要求后重试')
+      await ui.alert('AI 未生成题目，请调整要求后重试', { tone: 'warning' })
       return
     }
     applyGeneratedQuestion(generatedList[0])
     closeAiDialog()
   } catch (error) {
     console.error('AI generate failed', error)
-    alert('AI 出题失败，请稍后重试')
+    await ui.alert('AI 出题失败，请稍后重试', { tone: 'error' })
   } finally {
     isAiGenerating.value = false
   }

@@ -2287,7 +2287,9 @@ def update_exam(
     for field, value in data.items():
         setattr(exam, field, value)
     if question_items is not None:
-        exam.total_score = sum(item.score for item in question_items)
+        exam.total_score = sum(
+            float(_payload_get(item, "score", 0) or 0) for item in question_items
+        )
     db.add(exam)
     db.commit()
     if class_ids is not None or question_items is not None:
@@ -3358,6 +3360,12 @@ def _teacher_student_risk_level(latest_score: float, avg_correct_rate: float) ->
     return "low"
 
 
+def _payload_get(item, key: str, default=None):
+    if isinstance(item, dict):
+        return item.get(key, default)
+    return getattr(item, key, default)
+
+
 def _replace_question_relations(
     db: Session, question_id: int, options, knowledge_point_ids
 ) -> None:
@@ -3369,11 +3377,13 @@ def _replace_question_relations(
             QuestionOption.question_id == question_id
         ).delete()
         for index, option in enumerate(options, start=1):
+            option_key = _payload_get(option, "key")
+            option_content = _payload_get(option, "content")
             db.add(
                 QuestionOption(
                     question_id=question_id,
-                    option_key=option.key,
-                    content=option.content,
+                    option_key=option_key,
+                    content=option_content,
                     sort_order=index,
                 )
             )
@@ -3406,10 +3416,10 @@ def _replace_exam_relations(
             db.add(
                 ExamQuestion(
                     exam_id=exam_id,
-                    question_id=item.question_id,
-                    score=item.score,
-                    order_no=item.order_no,
-                    section_name=item.section_name,
+                    question_id=_payload_get(item, "question_id"),
+                    score=_payload_get(item, "score"),
+                    order_no=_payload_get(item, "order_no"),
+                    section_name=_payload_get(item, "section_name"),
                 )
             )
         if len(question_items) == 0:

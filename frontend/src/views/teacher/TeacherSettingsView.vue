@@ -5,10 +5,12 @@ import { RouterView, useRoute } from 'vue-router'
 import { Bell, ChevronRight, LogOut, MessageSquareWarning, Shield, User } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import UserFeedbackButton from '@/components/common/UserFeedbackButton.vue'
+import { useUiDialog } from '@/composables/useUiDialog'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const ui = useUiDialog()
 
 const isSettingsHome = computed(() => route.path === '/app/teacher/settings')
 
@@ -17,8 +19,12 @@ const goToNotification = () => router.push('/app/teacher/settings/notifications'
 const goToSecurity = () => router.push('/app/teacher/settings/security')
 const goToFeedbackManage = () => router.push('/app/teacher/feedback')
 
-const handleLogout = () => {
-  const confirmed = window.confirm('确认退出登录吗？')
+const handleLogout = async () => {
+  const confirmed = await ui.confirm('确认退出登录吗？', {
+    title: '退出登录',
+    confirmText: '确认退出',
+    tone: 'warning',
+  })
   if (!confirmed) return
   authStore.logout()
   router.push('/auth')

@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { Search, Filter, Calendar } from 'lucide-vue-next'
+import { useUiDialog } from '@/composables/useUiDialog'
 import http from '@/lib/http'
 
 interface Exam {
@@ -21,6 +22,7 @@ interface Exam {
 const exams = ref<Exam[]>([])
 const loading = ref(true)
 const activeTab = ref('all') // 'all', 'upcoming', 'ongoing', 'finished'
+const ui = useUiDialog()
 
 const fetchExams = async () => {
   loading.value = true
@@ -65,15 +67,19 @@ const getRetakeStatusLabel = (exam: Exam) => {
 
 const submitRetakeRequest = async (exam: Exam) => {
   try {
-    const reason = window.prompt('请输入重考申请理由（可选）', '希望再次尝试本场考试，查漏补缺。') || undefined
+    const reason = (await ui.prompt('请输入重考申请理由（可选）', {
+      title: '申请重考',
+      defaultValue: '希望再次尝试本场考试，查漏补缺。',
+      confirmText: '提交申请',
+    })) || undefined
     await http.post('/student/exams/retake-request', {
       exam_id: Number(exam.id),
       reason,
     })
     await fetchExams()
-    alert('重考申请已提交，等待教师审批。')
+    ui.toast('重考申请已提交，等待教师审批。', 'success')
   } catch (error: any) {
-    alert(error?.message || '申请失败，请稍后重试')
+    await ui.alert(error?.message || '申请失败，请稍后重试', { tone: 'error' })
   }
 }
 

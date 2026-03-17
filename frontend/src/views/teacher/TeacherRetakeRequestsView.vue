@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { CheckCircle2, RotateCcw, XCircle } from 'lucide-vue-next'
+import { useUiDialog } from '@/composables/useUiDialog'
 import { getRetakeRequests, reviewRetakeRequest } from '@/api/teacher'
 
 const requests = ref<any[]>([])
 const isLoading = ref(true)
 const activeStatus = ref<'pending' | 'all'>('pending')
 const actionLoadingId = ref<number | null>(null)
+const ui = useUiDialog()
 
 const fetchRequests = async () => {
   try {
@@ -28,13 +30,17 @@ const switchStatus = (status: 'pending' | 'all') => {
 }
 
 const handleAction = async (item: any, action: 'approve' | 'reject') => {
-  const comment = window.prompt(action === 'approve' ? '通过重考申请，可填写备注（可选）' : '驳回原因（可选）', '') || undefined
+  const comment = (await ui.prompt(action === 'approve' ? '通过重考申请，可填写备注（可选）' : '驳回原因（可选）', {
+    title: action === 'approve' ? '批准重考' : '驳回申请',
+    confirmText: action === 'approve' ? '确认批准' : '确认驳回',
+    defaultValue: '',
+  })) || undefined
   try {
     actionLoadingId.value = Number(item.request_id)
     await reviewRetakeRequest({ request_id: Number(item.request_id), action, comment })
     await fetchRequests()
   } catch (error: any) {
-    alert(error?.message || '操作失败，请稍后重试')
+    await ui.alert(error?.message || '操作失败，请稍后重试', { tone: 'error' })
   } finally {
     actionLoadingId.value = null
   }

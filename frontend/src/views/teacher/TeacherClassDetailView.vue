@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Settings, UserPlus, Download, X, Loader2, Trash2, BrainCircuit, Search } from 'lucide-vue-next'
+import { useUiDialog } from '@/composables/useUiDialog'
 import { getClassDetail, getClassStudents, inviteStudentToClass, removeStudentFromClass, getTeacherDashboardOverview } from '@/api/teacher'
 
 const route = useRoute()
@@ -18,6 +19,7 @@ const showInviteModal = ref(false)
 const inviteStudentIdInput = ref('')
 const inviteLoading = ref(false)
 const actionMessage = ref('')
+const ui = useUiDialog()
 
 const riskMap = ref<Record<number, 'high' | 'medium' | 'low'>>({})
 
@@ -210,7 +212,11 @@ const submitInvite = async () => {
 
 const removeStudent = async (student: any) => {
   actionMessage.value = ''
-  const confirmed = window.confirm(`确认将 ${student.name} 移出班级吗？`)
+  const confirmed = await ui.confirm(`确认将 ${student.name} 移出班级吗？`, {
+    title: '移除学生',
+    confirmText: '确认移除',
+    tone: 'warning',
+  })
   if (!confirmed) return
 
   try {

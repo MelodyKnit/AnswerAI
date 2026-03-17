@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus, Search, FileText, ChevronRight, Trash2 } from 'lucide-vue-next'
+import { useUiDialog } from '@/composables/useUiDialog'
 import { deleteExam, getExams } from '@/api/teacher'
 
 const router = useRouter()
@@ -9,6 +10,7 @@ const exams = ref<any[]>([])
 const isLoading = ref(true)
 const filterStatus = ref('all') // all, draft, published, finished
 const keyword = ref('')
+const ui = useUiDialog()
 
 const parseServerTime = (value: string) => {
   if (!value) return Number.NaN
@@ -59,14 +61,18 @@ const canDelete = (exam: any) => getEffectiveStatus(exam) === 'finished'
 
 const handleDelete = async (exam: any) => {
   if (!canDelete(exam)) return
-  const confirmed = window.confirm(`确认删除考试「${exam.title}」吗？此操作不可恢复。`)
+  const confirmed = await ui.confirm(`确认删除考试「${exam.title}」吗？此操作不可恢复。`, {
+    title: '删除考试',
+    confirmText: '确认删除',
+    tone: 'warning',
+  })
   if (!confirmed) return
   try {
     await deleteExam(Number(exam.id))
     await fetchExams()
   } catch (error: any) {
     const detail = error?.response?.data?.detail
-    alert(typeof detail === 'string' ? detail : '删除失败，请稍后重试')
+    await ui.alert(typeof detail === 'string' ? detail : '删除失败，请稍后重试', { tone: 'error' })
   }
 }
 

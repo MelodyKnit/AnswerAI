@@ -2,6 +2,7 @@
 import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowLeft, Play, Sparkles, Save } from 'lucide-vue-next'
+import { useUiDialog } from '@/composables/useUiDialog'
 import { assembleExamByAi, createExam, getClasses, getExams, getQuestionSubjects, getQuestions } from '@/api/teacher'
 
 const router = useRouter()
@@ -63,6 +64,7 @@ const aiRequirement = ref('')
 
 const isSubmitting = ref(false)
 const submitMode = ref<'draft' | 'publish' | null>(null)
+const ui = useUiDialog()
 
 const questionTypeOptions = [
   { value: 'all', label: '全部题型' },
@@ -225,30 +227,30 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
 
   const title = form.value.title.trim()
   if (!title) {
-    alert('请先填写考试名称')
+    await ui.alert('请先填写考试名称', { tone: 'warning' })
     return
   }
   if (!form.value.subject || form.value.subject === ALL_SUBJECT_VALUE) {
-    alert('请先选择科目')
+    await ui.alert('请先选择科目', { tone: 'warning' })
     return
   }
   if (Number(form.value.duration_minutes) <= 0) {
-    alert('考试时长必须大于 0 分钟')
+    await ui.alert('考试时长必须大于 0 分钟', { tone: 'warning' })
     return
   }
 
   if (!isTimeRangeValid.value) {
-    alert('请设置正确的考试开放时间范围')
+    await ui.alert('请设置正确的考试开放时间范围', { tone: 'warning' })
     return
   }
 
   if (mode === 'publish' && form.value.selected_class_ids.length === 0) {
-    alert('创建并发布时至少要关联一个班级')
+    await ui.alert('创建并发布时至少要关联一个班级', { tone: 'warning' })
     return
   }
 
   if (mode === 'publish' && examQuestions.value.length === 0) {
-    alert('创建并发布前请至少添加一道试题')
+    await ui.alert('创建并发布前请至少添加一道试题', { tone: 'warning' })
     return
   }
 
@@ -259,7 +261,7 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
     const existed = await getExams({ keyword: title, page: 1, page_size: 100 })
     const hasDuplicate = ((existed as any)?.items || []).some((item: any) => String(item?.title || '').trim() === title)
     if (hasDuplicate) {
-      alert(`您已创建过同名考试「${title}」，请使用不同名称`)
+      await ui.alert(`您已创建过同名考试「${title}」，请使用不同名称`, { tone: 'warning' })
       isSubmitting.value = false
       submitMode.value = null
       return
@@ -291,17 +293,17 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
     const res = await createExam(payload)
     const examId = (res as any).exam?.id
     if (examId) {
-      alert(mode === 'publish' ? '考试已创建并发布' : '考试草稿已保存')
+      ui.toast(mode === 'publish' ? '考试已创建并发布' : '考试草稿已保存', 'success')
       router.replace(`/app/teacher/exams/${examId}`)
     } else {
-      alert('创建成功，但未拿到考试ID，请刷新后查看考试列表')
+      await ui.alert('创建成功，但未拿到考试ID，请刷新后查看考试列表', { tone: 'warning' })
     }
   } catch (error) {
     console.error('Failed to create exam', error)
     const err = error as any
     const detail = err?.response?.data?.detail
     const message = typeof detail === 'string' ? detail : (err?.message || '创建失败，请稍后重试')
-    alert(message)
+    await ui.alert(message, { tone: 'error' })
   } finally {
     isSubmitting.value = false
     submitMode.value = null
@@ -442,11 +444,11 @@ const closeAiAssemble = () => {
 const runAiAssemble = async () => {
   const requirement = aiRequirement.value.trim()
   if (!form.value.subject || form.value.subject === ALL_SUBJECT_VALUE) {
-    alert('请先选择具体科目，再使用 AI 智能组卷')
+    await ui.alert('请先选择具体科目，再使用 AI 智能组卷', { tone: 'warning' })
     return
   }
   if (!requirement) {
-    alert('请先描述想要的试卷结构')
+    await ui.alert('请先描述想要的试卷结构', { tone: 'warning' })
     return
   }
 
@@ -462,10 +464,10 @@ const runAiAssemble = async () => {
     if (!picked.length) {
       const unmet = (res as any)?.unmet_requirements || []
       if (unmet.length) {
-        alert('题库中没有足够匹配的题目，请调整描述后重试')
+        await ui.alert('题库中没有足够匹配的题目，请调整描述后重试', { tone: 'warning' })
         return
       }
-      alert('未找到符合条件的题目，请换一种更明确的描述')
+      await ui.alert('未找到符合条件的题目，请换一种更明确的描述', { tone: 'warning' })
       return
     }
     appendQuestionsToExam(picked)
@@ -475,12 +477,12 @@ const runAiAssemble = async () => {
       const existingIds = new Set(questionBank.value.map((item) => item.id))
       questionBank.value = [...questionBank.value, ...picked.filter((item: any) => !existingIds.has(item.id))]
     }
-    alert((res as any)?.summary || `已加入 ${picked.length} 道题目`)
+    ui.toast((res as any)?.summary || `已加入 ${picked.length} 道题目`, 'success')
     closeAiAssemble()
   } catch (error) {
     console.error('AI assemble failed', error)
     const err = error as any
-    alert(err?.message || '智能组卷失败，请稍后重试')
+    await ui.alert(err?.message || '智能组卷失败，请稍后重试', { tone: 'error' })
   } finally {
     isAiAssembling.value = false
   }
