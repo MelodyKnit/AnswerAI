@@ -125,14 +125,12 @@ const getStatusText = (exam: any) => {
   }
 }
 
-const getKnowledgePointsText = (exam: any) => {
+const getKnowledgePoints = (exam: any) => {
   const points = Array.isArray(exam?.knowledge_points)
     ? exam.knowledge_points.map((item: any) => String(item || '').trim()).filter((item: string) => Boolean(item))
     : []
-  if (points.length > 0) {
-    return points.length <= 2 ? points.join('、') : `${points.slice(0, 2).join('、')} 等${points.length}个知识点`
-  }
-  return String(exam?.subject || '未分类知识点')
+  if (points.length > 0) return points
+  return [String(exam?.subject || '未分类知识点')]
 }
 
 const handleStatusChange = async () => {
@@ -182,16 +180,14 @@ const handleStatusChange = async () => {
         class="exam-card clickable"
         @click="goExam(exam)"
       >
-        <div class="card-main">
-          <h3 class="exam-title">{{ exam.title }}</h3>
-          <div class="exam-meta">
-            <span>{{ getKnowledgePointsText(exam) }}</span>
-            <span class="dot">·</span>
-            <span>共 {{ exam.total_score || 100 }} 分</span>
-            <span class="dot">·</span>
-            <span>{{ exam.duration_minutes || 60 }} 分钟</span>
-          </div>
+        <h3 class="exam-title">{{ exam.title }}</h3>
+
+        <div class="exam-meta">
+          <span>共 {{ exam.total_score || 100 }} 分</span>
+          <span class="dot">·</span>
+          <span>{{ exam.duration_minutes || 60 }} 分钟</span>
         </div>
+
         <div class="card-side">
           <button
             class="delete-button"
@@ -210,6 +206,17 @@ const handleStatusChange = async () => {
             {{ getStatusText(exam) }}
           </span>
           <ChevronRight :size="18" class="icon-right" />
+        </div>
+
+        <div class="knowledge-divider"></div>
+        <div class="knowledge-points-row">
+          <span
+            v-for="point in getKnowledgePoints(exam)"
+            :key="`${exam.id}-${point}`"
+            class="knowledge-chip"
+          >
+            {{ point }}
+          </span>
         </div>
       </div>
     </div>
@@ -288,10 +295,15 @@ const handleStatusChange = async () => {
 }
 
 .exam-card {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 126px;
+  grid-template-areas:
+    'title side'
+    'meta side'
+    'divider divider'
+    'points points';
   align-items: center;
-  gap: 14px;
+  gap: 8px;
   padding: 16px;
   background: #fff;
   border: 1px solid var(--line);
@@ -303,15 +315,9 @@ const handleStatusChange = async () => {
   border-color: var(--ink-light);
 }
 
-.card-main {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
 .exam-title {
+  grid-area: title;
+  min-width: 0;
   font-size: 16px;
   font-weight: 500;
   color: var(--ink);
@@ -320,6 +326,7 @@ const handleStatusChange = async () => {
 }
 
 .exam-meta {
+  grid-area: meta;
   font-size: 13px;
   color: var(--ink-soft);
   display: flex;
@@ -328,14 +335,46 @@ const handleStatusChange = async () => {
   row-gap: 4px;
 }
 
+.knowledge-divider {
+  grid-area: divider;
+  width: 100%;
+  border-top: 1px dashed #d5e0ec;
+  margin-top: 2px;
+  padding-top: 8px;
+}
+
+.knowledge-points-row {
+  grid-area: points;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.knowledge-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #bcd2ef;
+  background: #e9f2ff;
+  color: #1d4f91;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1;
+}
+
 .dot {
   margin: 0 6px;
 }
 
 .card-side {
+  grid-area: side;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
+  align-self: center;
+  justify-self: center;
+  width: 126px;
   flex-shrink: 0;
 }
 
@@ -409,12 +448,13 @@ const handleStatusChange = async () => {
   }
 
   .exam-card {
-    align-items: flex-start;
+    grid-template-columns: minmax(0, 1fr) 118px;
+    gap: 8px;
   }
 
   .card-side {
-    min-width: 108px;
-    justify-content: flex-end;
+    width: 118px;
+    justify-content: center;
     align-self: center;
   }
 
