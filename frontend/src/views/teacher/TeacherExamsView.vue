@@ -61,11 +61,20 @@ const goCreate = () => {
   router.push('/app/teacher/exams/create')
 }
 
-const goDetail = (id: number) => {
+const goExam = (exam: any) => {
+  const id = Number(exam?.id)
+  if (!Number.isFinite(id) || id <= 0) return
+  if (getEffectiveStatus(exam) === 'draft') {
+    router.push(`/app/teacher/exams/create?exam_id=${id}`)
+    return
+  }
   router.push(`/app/teacher/exams/${id}`)
 }
 
-const canDelete = (exam: any) => getEffectiveStatus(exam) === 'finished'
+const canDelete = (exam: any) => {
+  const status = getEffectiveStatus(exam)
+  return status === 'draft' || status === 'finished'
+}
 
 const handleDelete = async (exam: any) => {
   if (!canDelete(exam)) return
@@ -161,7 +170,7 @@ const handleStatusChange = async () => {
         v-for="exam in exams" 
         :key="exam.id" 
         class="exam-card clickable"
-        @click="goDetail(exam.id)"
+        @click="goExam(exam)"
       >
         <div class="card-main">
           <h3 class="exam-title">{{ exam.title }}</h3>
@@ -179,7 +188,7 @@ const handleStatusChange = async () => {
             :class="{ 'delete-button--disabled': !canDelete(exam) }"
             :disabled="!canDelete(exam)"
             @click.stop="handleDelete(exam)"
-            :title="canDelete(exam) ? '删除考试' : '仅已结束考试可删除'"
+            :title="canDelete(exam) ? '删除考试' : '仅草稿或已结束考试可删除'"
             aria-label="删除考试"
           >
             <Trash2 :size="15" />

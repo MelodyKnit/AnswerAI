@@ -116,6 +116,37 @@ const restoreIgnoredTask = async (task: any) => {
   }
 }
 
+const showReadinessScoreExplain = async () => {
+  const overview = aiOverview.value || {}
+  const formula = overview?.score_formula || {}
+  const activeCount = Number(overview?.active_task_count || 0)
+  const completedCount = Number(overview?.completed_count || 0)
+  const score = Number(overview?.readiness_score || 0)
+  const base = Number(formula?.base ?? 100)
+  const activePenalty = Number(formula?.active_penalty_per_task ?? 6)
+  const completedBonus = Number(formula?.completed_bonus_per_task ?? 4)
+  const minScore = Number(formula?.min_score ?? 45)
+  const maxScore = Number(formula?.max_score ?? 95)
+
+  const rawScore = base - activeCount * activePenalty + completedCount * completedBonus
+  const message = [
+    `当前学习状态（AI评估）：${score}/100`,
+    '',
+    '计算方式：',
+    `1. ${formula?.expression || '评分 = clamp(45, 95, 100 - 待推进任务数×6 + 已完成任务数×4)'}`,
+    `2. 原始值 = ${base} - ${activeCount}×${activePenalty} + ${completedCount}×${completedBonus} = ${rawScore}`,
+    `3. 限制区间 [${minScore}, ${maxScore}]，最终得分 = ${score}`,
+    '',
+    `统计口径：待推进任务 ${activeCount} 个，已完成任务 ${completedCount} 个。`,
+  ].join('\n')
+
+  await ui.alert(message, {
+    title: '学习状态（AI评估）说明',
+    confirmText: '我知道了',
+    tone: 'info',
+  })
+}
+
 onMounted(async () => {
   try {
     await refreshTasks()
@@ -139,14 +170,15 @@ onMounted(async () => {
     </header>
 
     <section v-if="aiOverview" class="ai-panel">
-      <article class="ai-score-card">
+      <button class="ai-score-card ai-score-card--interactive" type="button" @click="showReadinessScoreExplain">
         <p class="ai-kicker">您当前的学习状态（AI评估）</p>
         <div class="ai-score-row">
           <p class="ai-score">{{ aiOverview.readiness_score }}</p>
           <p class="ai-score-unit">/100</p>
         </div>
         <p class="ai-summary">{{ aiOverview.summary }}</p>
-      </article>
+        <p class="ai-tip">点击查看计算方式</p>
+      </button>
 
       <article class="ai-metrics">
         <div class="metric-cell">
@@ -384,10 +416,28 @@ onMounted(async () => {
 }
 
 .ai-score-card {
+  width: 100%;
+  text-align: left;
   background: linear-gradient(160deg, rgba(243, 251, 247, 0.95) 0%, rgba(227, 243, 234, 0.92) 100%);
   border: 1px solid #c8dfd2;
   border-radius: 14px;
   padding: 14px;
+}
+
+.ai-score-card--interactive {
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.ai-score-card--interactive:hover {
+  transform: translateY(-1px);
+  border-color: #b6d5c3;
+  box-shadow: 0 10px 22px rgba(22, 58, 42, 0.08);
+}
+
+.ai-score-card--interactive:focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.45);
+  outline-offset: 2px;
 }
 
 .ai-kicker {
@@ -422,6 +472,12 @@ onMounted(async () => {
   color: #3b5648;
   font-size: 13px;
   line-height: 1.5;
+}
+
+.ai-tip {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #5b7467;
 }
 
 .ai-metrics {

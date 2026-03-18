@@ -1480,6 +1480,14 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
         "suggested_session_minutes": suggested_session_minutes,
         "estimated_completion_days": estimated_completion_days,
         "focus_types": focus_types,
+        "score_formula": {
+            "base": 100,
+            "active_penalty_per_task": 6,
+            "completed_bonus_per_task": 4,
+            "min_score": 45,
+            "max_score": 95,
+            "expression": "评分 = clamp(45, 95, 100 - 待推进任务数×6 + 已完成任务数×4)",
+        },
         "summary": (
             "当前任务节奏良好，建议保持每日固定复习窗口。"
             if active_count <= 2

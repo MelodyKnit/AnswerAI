@@ -109,6 +109,7 @@ class ExamCreateRequest(BaseModel):
 class ExamUpdateRequest(BaseModel):
     exam_id: int
     title: str | None = None
+    subject: str | None = None
     duration_minutes: int | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None

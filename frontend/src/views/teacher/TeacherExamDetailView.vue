@@ -456,6 +456,11 @@ onMounted(() => {
 
 const goBack = () => router.back()
 
+const goEditDraft = () => {
+  if (!exam.value || String(exam.value.status || '') !== 'draft') return
+  router.push(`/app/teacher/exams/create?exam_id=${exam.value.id}`)
+}
+
 const openSettingsPanel = () => {
   showSettingsPanel.value = true
 }
@@ -559,6 +564,13 @@ const handleSaveSchedule = async () => {
       </button>
       <div class="header-right" v-if="exam">
         <div class="status-pill" :class="`status--${effectiveStatus}`">{{ statusText }}</div>
+        <button
+          v-if="exam.status === 'draft'"
+          class="setting-trigger setting-trigger--edit"
+          @click="goEditDraft"
+        >
+          继续编辑
+        </button>
         <button class="setting-trigger" @click="openSettingsPanel">
           <Settings2 :size="15" />
           设置
@@ -901,6 +913,12 @@ const handleSaveSchedule = async () => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+}
+
+.setting-trigger--edit {
+  border-color: #9fd3bc;
+  background: rgba(15, 118, 110, 0.08);
+  color: #0f766e;
 }
 
 .icon-button {

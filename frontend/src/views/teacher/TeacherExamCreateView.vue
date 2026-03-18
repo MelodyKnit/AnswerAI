@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Play, Sparkles, Save } from 'lucide-vue-next'
 import { useUiDialog } from '@/composables/useUiDialog'
-import { assembleExamByAi, createExam, getClasses, getExams, getQuestionSubjects, getQuestions } from '@/api/teacher'
+import { assembleExamByAi, createExam, getClasses, getExamDetail, getExams, getQuestionSubjects, getQuestions, publishExam, updateExam } from '@/api/teacher'
 import AppDropdown from '@/components/common/AppDropdown.vue'
 
 const router = useRouter()
+const route = useRoute()
 const ALL_SUBJECT_VALUE = '__all__'
 const EXAM_CREATE_META_CACHE_KEY = 'teacher_exam_create_meta_v1'
 
@@ -30,6 +31,13 @@ const formatDateTimeLocal = (date: Date) => {
 const toIsoFromLocal = (value: string) => {
   const dt = new Date(value)
   return dt.toISOString()
+}
+
+const toLocalDateTimeInput = (value: string | null | undefined, fallback: string) => {
+  if (!value) return fallback
+  const dt = new Date(value)
+  if (Number.isNaN(dt.getTime())) return fallback
+  return formatDateTimeLocal(dt)
 }
 
 const defaultStart = roundToNextQuarter(new Date())
@@ -65,7 +73,16 @@ const aiRequirement = ref('')
 
 const isSubmitting = ref(false)
 const submitMode = ref<'draft' | 'publish' | null>(null)
+const isHydratingEdit = ref(false)
 const ui = useUiDialog()
+
+const editingExamId = computed<number | null>(() => {
+  const rawValue = Array.isArray(route.query.exam_id) ? route.query.exam_id[0] : route.query.exam_id
+  const parsed = Number(rawValue)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+})
+
+const isEditMode = computed(() => editingExamId.value !== null)
 
 const questionTypeOptions = [
   { value: 'all', label: '全部题型' },
@@ -265,7 +282,12 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
 
   try {
     const existed = await getExams({ keyword: title, page: 1, page_size: 100 })
-    const hasDuplicate = ((existed as any)?.items || []).some((item: any) => String(item?.title || '').trim() === title)
+    const hasDuplicate = ((existed as any)?.items || []).some((item: any) => {
+      const sameTitle = String(item?.title || '').trim() === title
+      if (!sameTitle) return false
+      if (!isEditMode.value) return true
+      return Number(item?.id) !== Number(editingExamId.value)
+    })
     if (hasDuplicate) {
       await ui.alert(`您已创建过同名考试「${title}」，请使用不同名称`, { tone: 'warning' })
       isSubmitting.value = false
@@ -277,14 +299,13 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
   }
 
   try {
-    const payload = {
+    const commonPayload = {
       title,
       subject: form.value.subject,
       duration_minutes: Number(form.value.duration_minutes || 60),
       start_time: toIsoFromLocal(form.value.start_time),
       end_time: toIsoFromLocal(form.value.end_time),
       instructions: form.value.instructions || null,
-      publish_now: mode === 'publish',
       allow_review: true,
       random_question_order: false,
       class_ids: form.value.selected_class_ids,
@@ -296,13 +317,28 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
       })),
     }
 
-    const res = await createExam(payload)
-    const examId = (res as any).exam?.id
-    if (examId) {
-      ui.toast(mode === 'publish' ? '考试已创建并发布' : '考试草稿已保存', 'success')
-      router.replace(`/app/teacher/exams/${examId}`)
+    if (isEditMode.value && editingExamId.value) {
+      await updateExam({
+        exam_id: editingExamId.value,
+        ...commonPayload,
+      })
+      if (mode === 'publish') {
+        await publishExam(editingExamId.value)
+      }
+      ui.toast(mode === 'publish' ? '草稿已更新并发布' : '草稿修改已保存', 'success')
+      router.replace(`/app/teacher/exams/${editingExamId.value}`)
     } else {
-      await ui.alert('创建成功，但未拿到考试ID，请刷新后查看考试列表', { tone: 'warning' })
+      const res = await createExam({
+        ...commonPayload,
+        publish_now: mode === 'publish',
+      })
+      const examId = (res as any).exam?.id
+      if (examId) {
+        ui.toast(mode === 'publish' ? '考试已创建并发布' : '考试草稿已保存', 'success')
+        router.replace(`/app/teacher/exams/${examId}`)
+      } else {
+        await ui.alert('创建成功，但未拿到考试ID，请刷新后查看考试列表', { tone: 'warning' })
+      }
     }
   } catch (error) {
     console.error('Failed to create exam', error)
@@ -351,8 +387,58 @@ const fetchMeta = async () => {
   }
 }
 
-onMounted(() => {
-  fetchMeta()
+const hydrateDraftForEdit = async () => {
+  if (!editingExamId.value) return
+
+  try {
+    isHydratingEdit.value = true
+    const detailRes = await getExamDetail(editingExamId.value)
+    const detailExam = (detailRes as any)?.exam
+    if (!detailExam) {
+      await ui.alert('未找到草稿内容，请返回考试列表重试', { tone: 'warning' })
+      router.replace('/app/teacher/exams')
+      return
+    }
+
+    if (String(detailExam.status || '') !== 'draft') {
+      await ui.alert('该考试已不是草稿状态，已为你跳转到详情页。', { tone: 'info' })
+      router.replace(`/app/teacher/exams/${editingExamId.value}`)
+      return
+    }
+
+    const fallbackClassIds = Array.isArray(detailExam.class_ids) ? detailExam.class_ids : []
+    const detailClasses = Array.isArray((detailRes as any)?.classes) ? (detailRes as any).classes : []
+    const classIds = detailClasses.length > 0 ? detailClasses.map((item: any) => Number(item.id)) : fallbackClassIds
+
+    form.value.title = String(detailExam.title || '')
+    form.value.instructions = String(detailExam.instructions || '')
+    form.value.subject = detailExam.subject ? String(detailExam.subject) : ALL_SUBJECT_VALUE
+    form.value.duration_minutes = Number(detailExam.duration_minutes || 60)
+    form.value.total_score = Math.max(1, Math.round(Number(detailExam.total_score || 100)))
+    form.value.start_time = toLocalDateTimeInput(String(detailExam.start_time || ''), form.value.start_time)
+    form.value.end_time = toLocalDateTimeInput(String(detailExam.end_time || ''), form.value.end_time)
+    form.value.selected_class_ids = classIds.filter((id: number) => Number.isFinite(id))
+
+    const items = Array.isArray((detailRes as any)?.question_items) ? (detailRes as any).question_items : []
+    examQuestions.value = items.map((item: any) => ({
+      question_id: Number(item?.question_id),
+      stem: String(item?.question?.stem || ''),
+      type: String(item?.question?.type || ''),
+      score: Number(item?.score || 0),
+      difficulty: Number(item?.question?.difficulty || 0.5),
+    }))
+  } catch (error) {
+    console.error('Failed to hydrate exam draft', error)
+    await ui.alert('加载草稿失败，请稍后重试', { tone: 'error' })
+    router.replace('/app/teacher/exams')
+  } finally {
+    isHydratingEdit.value = false
+  }
+}
+
+onMounted(async () => {
+  await fetchMeta()
+  await hydrateDraftForEdit()
 })
 
 const fetchQuestionBank = async () => {
@@ -522,13 +608,15 @@ const getTypeLabel = (type: string) => {
       <button class="icon-button" @click="goBack" aria-label="返回">
         <ArrowLeft :size="24" />
       </button>
-      <h1 class="page-title">创建考试</h1>
+      <h1 class="page-title">{{ isEditMode ? '编辑草稿' : '创建考试' }}</h1>
       <button class="icon-button" aria-label="AI助手">
         <Sparkles :size="20" class="ai-icon" />
       </button>
     </header>
 
-    <div class="form-container">
+    <div v-if="isHydratingEdit" class="loading-state">正在加载草稿...</div>
+
+    <div v-else class="form-container">
       <div class="form-group">
         <label>考试名称</label>
         <input v-model="form.title" type="text" placeholder="例如：八年级物理期中测试" class="form-input" />
@@ -733,7 +821,7 @@ const getTypeLabel = (type: string) => {
         @click="handleCreate('draft')"
       >
         <Save :size="18" />
-        {{ isSubmitting && submitMode === 'draft' ? '保存中...' : '保存为草稿' }}
+        {{ isSubmitting && submitMode === 'draft' ? '保存中...' : (isEditMode ? '保存草稿修改' : '保存为草稿') }}
       </button>
       <button
         class="button button--primary"
@@ -742,7 +830,7 @@ const getTypeLabel = (type: string) => {
         :title="selectedClassCount === 0 ? '请先至少关联一个班级，或先保存草稿后在详情页绑定班级再发布' : ''"
       >
         <Play :size="18" />
-        {{ isSubmitting && submitMode === 'publish' ? '发布中...' : '创建并发布' }}
+        {{ isSubmitting && submitMode === 'publish' ? '发布中...' : (isEditMode ? '保存并发布' : '创建并发布') }}
       </button>
     </footer>
   </div>
@@ -782,6 +870,12 @@ const getTypeLabel = (type: string) => {
   font-size: 18px;
   font-weight: 600;
   color: var(--ink);
+}
+
+.loading-state {
+  padding: 20px 0;
+  text-align: center;
+  color: var(--ink-soft);
 }
 
 .form-container {

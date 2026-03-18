@@ -2278,7 +2278,43 @@ def update_exam(
     data = payload.model_dump(exclude_none=True)
     class_ids = data.pop("class_ids", None)
     question_items = data.pop("question_items", None)
+    subject_name = data.pop("subject", None)
     data.pop("exam_id", None)
+    if "title" in data:
+        normalized_title = str(data.get("title") or "").strip()
+        if not normalized_title:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Exam title is required",
+            )
+
+        duplicate_exam = db.scalar(
+            select(Exam)
+            .where(
+                Exam.created_by == current_user.id,
+                Exam.id != exam_id,
+                func.lower(Exam.title) == normalized_title.lower(),
+            )
+            .limit(1)
+        )
+        if duplicate_exam:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Exam title already exists for current teacher",
+            )
+
+        data["title"] = normalized_title
+
+    if subject_name is not None:
+        normalized_subject = str(subject_name).strip()
+        if not normalized_subject:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Subject is required",
+            )
+        subject_obj = _get_subject_by_name(db, normalized_subject)
+        data["subject_id"] = subject_obj.id
+
     if "start_time" in data or "end_time" in data:
         normalized_start, normalized_end = _normalize_exam_window(
             data.get("start_time") or exam.start_time,
@@ -2438,11 +2474,11 @@ def delete_exam(
         )
     exam = _get_teacher_exam(db, current_user.id, payload.exam_id)
 
-    # Only finished exams can be deleted to prevent accidental removal of active tasks.
-    if exam.status != "finished":
+    # Allow deleting draft/finished exams; keep published exams protected.
+    if exam.status not in {"draft", "finished"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only finished exams can be deleted",
+            detail="Only draft or finished exams can be deleted",
         )
 
     _cleanup_study_tasks_for_exam(db, exam.id)
