@@ -125,6 +125,16 @@ const getStatusText = (exam: any) => {
   }
 }
 
+const getKnowledgePointsText = (exam: any) => {
+  const points = Array.isArray(exam?.knowledge_points)
+    ? exam.knowledge_points.map((item: any) => String(item || '').trim()).filter((item: string) => Boolean(item))
+    : []
+  if (points.length > 0) {
+    return points.length <= 2 ? points.join('、') : `${points.slice(0, 2).join('、')} 等${points.length}个知识点`
+  }
+  return String(exam?.subject || '未分类知识点')
+}
+
 const handleStatusChange = async () => {
   await fetchExams()
 }
@@ -175,7 +185,7 @@ const handleStatusChange = async () => {
         <div class="card-main">
           <h3 class="exam-title">{{ exam.title }}</h3>
           <div class="exam-meta">
-            <span>{{ exam.subject || '通用' }}</span>
+            <span>{{ getKnowledgePointsText(exam) }}</span>
             <span class="dot">·</span>
             <span>共 {{ exam.total_score || 100 }} 分</span>
             <span class="dot">·</span>

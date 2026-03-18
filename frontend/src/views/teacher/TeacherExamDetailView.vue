@@ -113,6 +113,16 @@ const statusText = computed(() => {
   return '已结束'
 })
 
+const examKnowledgePointsText = computed(() => {
+  if (!exam.value) return '未分类知识点'
+  const points = Array.isArray(exam.value?.knowledge_points)
+    ? exam.value.knowledge_points.map((item: any) => String(item || '').trim()).filter((item: string) => Boolean(item))
+    : []
+  if (points.length <= 0) return String(exam.value?.subject || '未分类知识点')
+  if (points.length <= 3) return points.join('、')
+  return `${points.slice(0, 3).join('、')} 等${points.length}个知识点`
+})
+
 const canEditSchedule = computed(() => Boolean(exam.value) && effectiveStatus.value !== 'finished')
 
 const canEditStartTime = computed(() => Boolean(exam.value) && exam.value.status === 'draft')
@@ -586,7 +596,7 @@ const handleSaveSchedule = async () => {
           <h1 class="exam-title">{{ exam.title }}</h1>
           <p v-if="exam.instructions" class="exam-desc">{{ exam.instructions }}</p>
           <div class="meta-tags">
-            <span class="meta-tag">{{ exam.subject || '不限范围' }}</span>
+            <span class="meta-tag">{{ examKnowledgePointsText }}</span>
             <span class="meta-tag">{{ exam.duration_minutes }} 分钟</span>
             <span class="meta-tag">{{ exam.total_score }} 分</span>
             <span class="meta-tag">开始 {{ new Date(parseServerTime(String(exam.start_time || ''))).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }}</span>

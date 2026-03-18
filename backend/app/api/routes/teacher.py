@@ -1781,7 +1781,8 @@ def create_exam(
         payload.publish_now,
     )
 
-    subject_obj = _get_subject_by_name(db, payload.subject)
+    resolved_subject_name = _resolve_exam_subject_name(db, payload.subject, payload.question_items)
+    subject_obj = _get_subject_by_name(db, resolved_subject_name)
     exam = Exam(
         created_by=current_user.id,
         subject_id=subject_obj.id,
@@ -3109,6 +3110,15 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
         )
         or 0
     )
+    knowledge_points = db.scalars(
+        select(func.distinct(Subject.name))
+        .select_from(ExamQuestion)
+        .join(Question, Question.id == ExamQuestion.question_id)
+        .join(Subject, Subject.id == Question.subject_id)
+        .where(ExamQuestion.exam_id == exam.id)
+        .order_by(Subject.name.asc())
+    ).all()
+    knowledge_points = [str(item) for item in knowledge_points if str(item).strip()]
 
     def as_utc_iso(dt: datetime) -> str:
         if dt.tzinfo is None:
@@ -3119,6 +3129,7 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
         "id": exam.id,
         "title": exam.title,
         "subject": subject.name if subject else None,
+        "knowledge_points": knowledge_points,
         "duration_minutes": exam.duration_minutes,
         "total_score": float(exam.total_score),
         "status": exam.status,
@@ -3132,6 +3143,34 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
         "created_by": exam.created_by,
         "created_at": exam.created_at.isoformat(),
     }
+
+
+def _resolve_exam_subject_name(
+    db: Session,
+    subject_name: str | None,
+    question_items: list[Any] | None,
+) -> str:
+    normalized = str(subject_name or "").strip()
+    if normalized:
+        return normalized
+
+    if question_items:
+        for item in question_items:
+            if isinstance(item, dict):
+                question_id = item.get("question_id")
+            else:
+                question_id = getattr(item, "question_id", None)
+
+            if question_id is None:
+                continue
+            question = db.get(Question, int(question_id))
+            if not question:
+                continue
+            subject = db.get(Subject, int(question.subject_id))
+            if subject and str(subject.name or "").strip():
+                return str(subject.name).strip()
+
+    return "未分类知识点"
 
 
 def _serialize_exam_question(db: Session, item: ExamQuestion) -> dict:

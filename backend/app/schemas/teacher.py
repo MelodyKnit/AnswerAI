@@ -94,7 +94,7 @@ class ExamQuestionItemInput(BaseModel):
 
 class ExamCreateRequest(BaseModel):
     title: str
-    subject: str
+    subject: str | None = None
     duration_minutes: int
     start_time: datetime
     end_time: datetime

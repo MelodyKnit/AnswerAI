@@ -46,7 +46,6 @@ const defaultEnd = new Date(defaultStart.getTime() + 24 * 60 * 60 * 1000)
 const form = ref({
   title: '',
   instructions: '',
-  subject: ALL_SUBJECT_VALUE,
   duration_minutes: 60,
   total_score: 100,
   start_time: formatDateTimeLocal(defaultStart),
@@ -57,8 +56,7 @@ const form = ref({
 const subjects = ref<string[]>([])
 const classes = ref<Array<{ id: number, name: string, subject?: string }>>([])
 const questionBank = ref<any[]>([])
-const examQuestions = ref<Array<{ question_id: number, stem: string, type: string, score: number, difficulty: number }>>([])
-const questionBankSubject = ref<string | null>(null)
+const examQuestions = ref<Array<{ question_id: number, stem: string, type: string, score: number, difficulty: number, subject?: string }>>([])
 
 const isQuestionSelectorOpen = ref(false)
 const isAiAssembleOpen = ref(false)
@@ -67,9 +65,11 @@ const isAiAssembling = ref(false)
 
 const questionKeyword = ref('')
 const questionTypeFilter = ref('all')
+const questionSubjectFilter = ref(ALL_SUBJECT_VALUE)
 const tempSelectedQuestionIds = ref<number[]>([])
 
 const aiRequirement = ref('')
+const aiSubjectFilter = ref(ALL_SUBJECT_VALUE)
 
 const isSubmitting = ref(false)
 const submitMode = ref<'draft' | 'publish' | null>(null)
@@ -93,9 +93,23 @@ const questionTypeOptions = [
   { value: 'essay', label: '简答题' },
 ]
 
-const subjectOptions = computed(() => {
+const knowledgePointOptions = computed(() => {
   const dynamic = subjects.value.map((subject) => ({ label: subject, value: subject }))
   return [{ label: '全部知识点', value: ALL_SUBJECT_VALUE }, ...dynamic]
+})
+
+const selectedKnowledgePoints = computed(() => {
+  const points = examQuestions.value
+    .map((item) => String(item.subject || '').trim())
+    .filter((item): item is string => Boolean(item))
+  return Array.from(new Set(points))
+})
+
+const primaryKnowledgePoint = computed(() => {
+  if (selectedKnowledgePoints.value.length > 0) return selectedKnowledgePoints.value[0]
+  const aiPoint = String(aiSubjectFilter.value || '').trim()
+  if (aiPoint && aiPoint !== ALL_SUBJECT_VALUE) return aiPoint
+  return '未分类知识点'
 })
 
 const totalScore = computed(() => {
@@ -111,12 +125,7 @@ const questionTypeWeightMap: Record<string, number> = {
   material: 1.85,
 }
 
-const filteredClasses = computed(() => {
-  const activeSubject = getActiveSubject()
-  if (!activeSubject) return classes.value
-  const matched = classes.value.filter((item) => !item.subject || item.subject === activeSubject)
-  return matched.length ? matched : classes.value
-})
+const filteredClasses = computed(() => classes.value)
 
 const selectedClassCount = computed(() => form.value.selected_class_ids.length)
 
@@ -173,21 +182,6 @@ const redistributeQuestionScores = () => {
   }))
 }
 
-const getActiveSubject = () => {
-  return form.value.subject && form.value.subject !== ALL_SUBJECT_VALUE ? form.value.subject : undefined
-}
-
-const syncSubjectSelection = (nextSubjects: string[]) => {
-  if (nextSubjects.length > 0) {
-    if (!nextSubjects.includes(form.value.subject)) {
-      form.value.subject = nextSubjects[0]
-    }
-    return
-  }
-
-  form.value.subject = ALL_SUBJECT_VALUE
-}
-
 const getSubjectsFromClasses = (items: Array<{ subject?: string }>) => {
   return Array.from(new Set(items.map((item) => item.subject).filter((item): item is string => Boolean(item))))
 }
@@ -211,7 +205,12 @@ const hydrateMetaCache = () => {
     }
     if (cachedSubjects.length > 0) {
       subjects.value = cachedSubjects
-      syncSubjectSelection(cachedSubjects)
+      if (!cachedSubjects.includes(questionSubjectFilter.value)) {
+        questionSubjectFilter.value = ALL_SUBJECT_VALUE
+      }
+      if (!cachedSubjects.includes(aiSubjectFilter.value)) {
+        aiSubjectFilter.value = ALL_SUBJECT_VALUE
+      }
     }
   } catch (error) {
     console.warn('Failed to read exam creation metadata cache', error)
@@ -234,7 +233,7 @@ const filteredQuestionBank = computed(() => {
   return questionBank.value.filter((q) => {
     const keywordMatch = !keyword || String(q.stem || '').toLowerCase().includes(keyword)
     const typeMatch = questionTypeFilter.value === 'all' || q.type === questionTypeFilter.value
-    const subjectMatch = form.value.subject === ALL_SUBJECT_VALUE || q.subject === form.value.subject
+    const subjectMatch = questionSubjectFilter.value === ALL_SUBJECT_VALUE || q.subject === questionSubjectFilter.value
     return keywordMatch && typeMatch && subjectMatch
   })
 })
@@ -251,10 +250,6 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
   const title = form.value.title.trim()
   if (!title) {
     await ui.alert('请先填写考试名称', { tone: 'warning' })
-    return
-  }
-  if (!form.value.subject || form.value.subject === ALL_SUBJECT_VALUE) {
-    await ui.alert('请先选择知识点', { tone: 'warning' })
     return
   }
   if (Number(form.value.duration_minutes) <= 0) {
@@ -301,7 +296,7 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
   try {
     const commonPayload = {
       title,
-      subject: form.value.subject,
+      subject: primaryKnowledgePoint.value,
       duration_minutes: Number(form.value.duration_minutes || 60),
       start_time: toIsoFromLocal(form.value.start_time),
       end_time: toIsoFromLocal(form.value.end_time),
@@ -376,8 +371,6 @@ const fetchMeta = async () => {
     subjects.value = getSubjectsFromClasses(classes.value)
   }
 
-  syncSubjectSelection(subjects.value)
-
   if (subjects.value.length > 0 || classes.value.length > 0) {
     persistMetaCache()
   }
@@ -412,7 +405,6 @@ const hydrateDraftForEdit = async () => {
 
     form.value.title = String(detailExam.title || '')
     form.value.instructions = String(detailExam.instructions || '')
-    form.value.subject = detailExam.subject ? String(detailExam.subject) : ALL_SUBJECT_VALUE
     form.value.duration_minutes = Number(detailExam.duration_minutes || 60)
     form.value.total_score = Math.max(1, Math.round(Number(detailExam.total_score || 100)))
     form.value.start_time = toLocalDateTimeInput(String(detailExam.start_time || ''), form.value.start_time)
@@ -426,6 +418,7 @@ const hydrateDraftForEdit = async () => {
       type: String(item?.question?.type || ''),
       score: Number(item?.score || 0),
       difficulty: Number(item?.question?.difficulty || 0.5),
+      subject: String(item?.question?.subject || ''),
     }))
   } catch (error) {
     console.error('Failed to hydrate exam draft', error)
@@ -442,8 +435,7 @@ onMounted(async () => {
 })
 
 const fetchQuestionBank = async () => {
-  const activeSubject = getActiveSubject() || null
-  if (questionBank.value.length > 0 && questionBankSubject.value === activeSubject) {
+  if (questionBank.value.length > 0) {
     return
   }
 
@@ -452,10 +444,8 @@ const fetchQuestionBank = async () => {
     const res = await getQuestions({
       page: 1,
       page_size: 100,
-      subject: activeSubject || undefined,
     })
     questionBank.value = (res as any).items || []
-    questionBankSubject.value = activeSubject
   } catch (error) {
     console.error('Failed to load question bank', error)
   } finally {
@@ -494,6 +484,7 @@ const appendQuestionsToExam = (questions: any[]) => {
       type: q.type || '',
       score: 0,
       difficulty: Number(q.difficulty || 0.5),
+      subject: q.subject || '',
     })
   })
   examQuestions.value = next
@@ -513,6 +504,7 @@ const confirmQuestionSelection = () => {
       type: q.type || '',
       score: 0,
       difficulty: Number(q.difficulty || 0.5),
+      subject: q.subject || '',
     }))
 
   examQuestions.value = [...preserved, ...appended]
@@ -526,6 +518,9 @@ const removeExamQuestion = (questionId: number) => {
 }
 
 const openAiAssemble = () => {
+  if (aiSubjectFilter.value === ALL_SUBJECT_VALUE && selectedKnowledgePoints.value.length > 0) {
+    aiSubjectFilter.value = selectedKnowledgePoints.value[0]
+  }
   isAiAssembleOpen.value = true
 }
 
@@ -535,7 +530,7 @@ const closeAiAssemble = () => {
 
 const runAiAssemble = async () => {
   const requirement = aiRequirement.value.trim()
-  if (!form.value.subject || form.value.subject === ALL_SUBJECT_VALUE) {
+  if (!aiSubjectFilter.value || aiSubjectFilter.value === ALL_SUBJECT_VALUE) {
     await ui.alert('请先选择具体知识点，再使用 AI 智能组卷', { tone: 'warning' })
     return
   }
@@ -547,7 +542,7 @@ const runAiAssemble = async () => {
   try {
     isAiAssembling.value = true
     const res = await assembleExamByAi({
-      subject: form.value.subject,
+      subject: aiSubjectFilter.value,
       requirement,
       exclude_question_ids: examQuestions.value.map((item) => item.question_id),
     })
@@ -581,11 +576,21 @@ const runAiAssemble = async () => {
 }
 
 watch(
-  () => form.value.subject,
+  () => classes.value,
   () => {
-    questionBank.value = []
-    questionBankSubject.value = null
     form.value.selected_class_ids = form.value.selected_class_ids.filter((classId) => classes.value.some((item) => item.id === classId))
+  }
+)
+
+watch(
+  () => subjects.value,
+  (nextSubjects) => {
+    if (questionSubjectFilter.value !== ALL_SUBJECT_VALUE && !nextSubjects.includes(questionSubjectFilter.value)) {
+      questionSubjectFilter.value = ALL_SUBJECT_VALUE
+    }
+    if (aiSubjectFilter.value !== ALL_SUBJECT_VALUE && !nextSubjects.includes(aiSubjectFilter.value)) {
+      aiSubjectFilter.value = ALL_SUBJECT_VALUE
+    }
   }
 )
 
@@ -622,27 +627,28 @@ const getTypeLabel = (type: string) => {
         <input v-model="form.title" type="text" placeholder="例如：八年级物理期中测试" class="form-input" />
       </div>
 
-      <div class="form-row">
-        <div class="form-group">
-          <label>知识点</label>
-          <AppDropdown
-            v-model="form.subject"
-            class="form-dropdown"
-            :options="subjectOptions"
-            aria-label="知识点选择"
-          />
-        </div>
-        <div class="form-group">
-          <label>总分上限</label>
-          <input v-model.number="form.total_score" type="number" min="1" class="form-input" />
+      <div class="form-group">
+        <label>已选知识点（由题目自动识别）</label>
+        <div class="knowledge-preview-box">
+          <template v-if="selectedKnowledgePoints.length">
+            <span v-for="point in selectedKnowledgePoints" :key="point" class="knowledge-chip">{{ point }}</span>
+          </template>
+          <span v-else class="knowledge-empty">暂未从题目中识别知识点，请先从题库加入题目。</span>
         </div>
       </div>
 
       <div class="form-row">
         <div class="form-group">
+          <label>总分上限</label>
+          <input v-model.number="form.total_score" type="number" min="1" class="form-input" />
+        </div>
+        <div class="form-group">
           <label>考试时长 (分钟)</label>
           <input v-model="form.duration_minutes" type="number" min="1" class="form-input" />
         </div>
+      </div>
+
+      <div class="form-row form-row--single">
         <div class="form-group">
           <label>当前总分</label>
           <input type="text" class="form-input" :value="`${totalScore}（按题目自动估算）`" readonly />
@@ -715,6 +721,7 @@ const getTypeLabel = (type: string) => {
                   <div class="q-content-wrap">
                     <p class="q-stem">{{ item.stem || '题干为空' }}</p>
                     <div class="q-meta-line">
+                      <span>{{ item.subject || '未分类知识点' }}</span>
                       <span>{{ getTypeLabel(item.type) }}</span>
                       <span>难度 {{ item.difficulty }}</span>
                         <span>算法估分 {{ item.score }}</span>
@@ -749,6 +756,12 @@ const getTypeLabel = (type: string) => {
         <div class="dialog-filters">
           <input v-model="questionKeyword" class="form-input" type="text" placeholder="搜索题干关键词" />
           <AppDropdown
+            v-model="questionSubjectFilter"
+            class="form-dropdown"
+            :options="knowledgePointOptions"
+            aria-label="知识点筛选"
+          />
+          <AppDropdown
             v-model="questionTypeFilter"
             class="form-dropdown"
             :options="questionTypeOptions"
@@ -767,6 +780,7 @@ const getTypeLabel = (type: string) => {
             <div class="pick-main">
               <p class="pick-stem">{{ q.stem }}</p>
               <div class="pick-meta">
+                <span>{{ q.subject || '未分类知识点' }}</span>
                 <span>{{ getTypeLabel(q.type) }}</span>
                 <span>分值 {{ q.score }}</span>
                 <span>难度 {{ q.difficulty }}</span>
@@ -790,6 +804,15 @@ const getTypeLabel = (type: string) => {
           </button>
         </div>
         <div class="dialog-grid ai-dialog-grid">
+          <label class="form-group dialog-full">
+            <span>知识点范围</span>
+            <AppDropdown
+              v-model="aiSubjectFilter"
+              class="form-dropdown"
+              :options="knowledgePointOptions"
+              aria-label="AI组卷知识点"
+            />
+          </label>
           <label class="form-group dialog-full">
             <span>直接描述你想出的卷子</span>
             <textarea
@@ -890,6 +913,10 @@ const getTypeLabel = (type: string) => {
   gap: 16px;
 }
 
+.form-row--single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .form-row > .form-group {
   flex: 1;
   min-width: 0;
@@ -905,6 +932,34 @@ const getTypeLabel = (type: string) => {
   font-size: 13px;
   font-weight: 500;
   color: var(--ink-soft);
+}
+
+.knowledge-preview-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 1px solid #dce6f2;
+  border-radius: 12px;
+  background: #f8fbff;
+  padding: 10px 12px;
+}
+
+.knowledge-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #bcd2ef;
+  background: #e9f2ff;
+  color: #1d4f91;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.knowledge-empty {
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .range-hint-box {
@@ -1195,7 +1250,7 @@ const getTypeLabel = (type: string) => {
 
 .dialog-filters {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: minmax(0, 2fr) minmax(120px, 1fr) minmax(120px, 1fr);
   gap: 10px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--line);
