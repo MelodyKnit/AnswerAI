@@ -89,7 +89,8 @@ const handleCancel = () => {
 <style scoped>
 .feedback-toast-stack {
   position: fixed;
-  top: 18px;
+  top: auto;
+  bottom: calc(22px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 2000;
@@ -100,8 +101,15 @@ const handleCancel = () => {
   pointer-events: none;
 }
 
+@media (max-width: 768px) {
+  .feedback-toast-stack {
+    /* 避免和移动端底部导航重叠 */
+    bottom: calc(82px + env(safe-area-inset-bottom));
+  }
+}
+
 .toast-item {
-  pointer-events: auto;
+  pointer-events: none;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -243,7 +251,7 @@ const handleCancel = () => {
 .toast-slide-enter-from,
 .toast-slide-leave-to {
   opacity: 0;
-  transform: translateY(-10px);
+  transform: translateY(10px);
 }
 
 .dialog-fade-enter-from,

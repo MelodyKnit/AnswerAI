@@ -428,18 +428,26 @@ const submitEditor = async () => {
 
   try {
     isSaving.value = true
+    const isEditing = Boolean(editingQuestionId.value)
     if (editingQuestionId.value) {
       await updateQuestion({ question_id: editingQuestionId.value, ...payload })
     } else {
       await createQuestion(payload)
     }
-    closeEditor()
     await fetchQuestionSubjects()
     await fetchQuestions(true)
     await syncLoadMoreObserver()
+
+    if (isEditing) {
+      ui.toast('修改成功', 'success')
+    } else {
+      ui.toast('新增成功', 'success')
+      closeEditor()
+    }
   } catch (error) {
     console.error('Failed to save question', error)
-    await ui.alert('保存题目失败，请稍后重试', { tone: 'error' })
+    const message = (error as any)?.message ? String((error as any).message) : '保存题目失败，请稍后重试'
+    ui.toast(`保存失败：${message}`, 'error', 3600)
   } finally {
     isSaving.value = false
   }
