@@ -1410,7 +1410,7 @@ def list_question_subjects(
     current_user: User = Depends(require_role("teacher")), db: Session = Depends(get_db)
 ):
     """
-    返回当前教师题库中实际存在题目的科目名称列表。
+    返回当前教师题库中实际存在题目的知识点名称列表。
     """
     names = db.scalars(
         select(Subject.name)
@@ -1649,7 +1649,7 @@ def ai_assemble_exam_from_bank(
     if not questions:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="当前科目题库为空，无法智能组卷",
+            detail="当前知识点题库为空，无法智能组卷",
         )
 
     requirements = _parse_exam_assemble_requirement(payload.requirement)
@@ -3322,7 +3322,7 @@ def _get_subject_by_name(db: Session, subject_name: str) -> Subject:
     normalized_name = (subject_name or "").strip()
     if not normalized_name:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="科目不能为空"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="知识点不能为空"
         )
 
     subject_obj = db.scalar(select(Subject).where(Subject.name == normalized_name))
@@ -3333,7 +3333,7 @@ def _get_subject_by_name(db: Session, subject_name: str) -> Subject:
     if subject_obj:
         return subject_obj
 
-    # 题目编辑/创建允许写入新科目：首次使用即自动建档。
+    # 题目编辑/创建允许写入新知识点：首次使用即自动建档。
     new_subject = Subject(
         code=f"SUBJ-{uuid4().hex[:10]}",
         name=normalized_name,
@@ -3355,7 +3355,7 @@ def _get_subject_by_name(db: Session, subject_name: str) -> Subject:
             return subject_obj
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="科目创建冲突，请重试",
+            detail="知识点创建冲突，请重试",
         )
 
 

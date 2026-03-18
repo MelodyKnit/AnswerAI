@@ -172,7 +172,7 @@ const formatDate = (dateStr: string) => {
         </div>
         <div class="exam-body">
           <div class="meta-row">
-            <span class="meta-label">科目</span>
+            <span class="meta-label">知识点</span>
             <span class="meta-value">{{ exam.subject || '综合' }}</span>
           </div>
           <div class="meta-row">

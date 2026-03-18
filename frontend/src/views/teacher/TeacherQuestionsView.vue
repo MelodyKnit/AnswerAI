@@ -114,7 +114,7 @@ const subjectFilterOptions = computed(() => {
 
 const currentSubjectFilterLabel = computed(() => {
   if (activeSubjectFilter.value === 'all') {
-    return '全部科目'
+    return '全部知识点'
   }
   return activeSubjectFilter.value
 })
@@ -314,7 +314,7 @@ const openPreview = (question: any) => {
 
 const resetForm = () => {
   form.value = createDefaultForm()
-  form.value.subject = uniqueSubjects.value[0] || '默认科目'
+  form.value.subject = uniqueSubjects.value[0] || '默认知识点'
   form.value.type = questionTypes.value[0]?.code || 'single_choice'
 }
 
@@ -462,7 +462,7 @@ const buildAnswer = () => {
 const submitEditor = async () => {
   const normalizedSubject = form.value.subject.trim()
   if (!normalizedSubject || !form.value.type || !form.value.stem.trim()) {
-    await ui.alert('请完善科目、题型和题干', { tone: 'warning' })
+    await ui.alert('请完善知识点、题型和题干', { tone: 'warning' })
     return
   }
   form.value.subject = normalizedSubject
@@ -675,7 +675,7 @@ const applyGeneratedQuestion = (generated: any) => {
 
 const generateByAiAndApply = async () => {
   if (!form.value.subject || !form.value.type) {
-    await ui.alert('请先选择科目和题型', { tone: 'warning' })
+    await ui.alert('请先选择知识点和题型', { tone: 'warning' })
     return
   }
   if (!aiRequirement.value.trim()) {
@@ -744,20 +744,20 @@ const generateByAiAndApply = async () => {
 
         <div class="editor-grid">
         <label class="form-field">
-          <span>科目</span>
+          <span>知识点</span>
           <div class="subject-combobox" @focusout="closeSubjectMenuLater">
             <div class="subject-input-wrapper">
               <input
                 v-model="form.subject"
                 class="form-input"
-                placeholder="请选择或输入科目"
+                placeholder="请选择或输入知识点"
                 @focus="subjectMenuOpen = true"
                 @input="onSubjectInput"
               />
               <button
                 type="button"
                 class="subject-toggle"
-                aria-label="展开科目列表"
+                aria-label="展开知识点列表"
                 @mousedown.prevent="subjectMenuOpen = !subjectMenuOpen"
               >
                 <ChevronDown :size="16" :class="{ 'is-open': subjectMenuOpen }" />
@@ -774,7 +774,7 @@ const generateByAiAndApply = async () => {
                 {{ sub }}
               </button>
               <p v-if="filteredSubjectOptions.length === 0" class="subject-menu-empty">
-                暂无匹配项，直接保存可创建新科目
+                暂无匹配项，直接保存可创建新知识点
               </p>
             </div>
           </div>
@@ -991,7 +991,7 @@ const generateByAiAndApply = async () => {
             :class="{ active: activeSubjectFilter === sub }"
             @mousedown.prevent="chooseSubjectFilter(sub)"
           >
-            {{ sub === 'all' ? '全部科目' : sub }}
+            {{ sub === 'all' ? '全部知识点' : sub }}
           </button>
         </div>
       </div>

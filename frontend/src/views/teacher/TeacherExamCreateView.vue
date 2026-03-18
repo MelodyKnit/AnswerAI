@@ -231,7 +231,7 @@ const handleCreate = async (mode: 'draft' | 'publish' = 'draft') => {
     return
   }
   if (!form.value.subject || form.value.subject === ALL_SUBJECT_VALUE) {
-    await ui.alert('请先选择科目', { tone: 'warning' })
+    await ui.alert('请先选择知识点', { tone: 'warning' })
     return
   }
   if (Number(form.value.duration_minutes) <= 0) {
@@ -444,7 +444,7 @@ const closeAiAssemble = () => {
 const runAiAssemble = async () => {
   const requirement = aiRequirement.value.trim()
   if (!form.value.subject || form.value.subject === ALL_SUBJECT_VALUE) {
-    await ui.alert('请先选择具体科目，再使用 AI 智能组卷', { tone: 'warning' })
+    await ui.alert('请先选择具体知识点，再使用 AI 智能组卷', { tone: 'warning' })
     return
   }
   if (!requirement) {
@@ -530,9 +530,9 @@ const getTypeLabel = (type: string) => {
 
       <div class="form-row">
         <div class="form-group">
-          <label>科目</label>
+          <label>知识点</label>
           <select v-model="form.subject" class="form-input">
-            <option :value="ALL_SUBJECT_VALUE">全部科目</option>
+            <option :value="ALL_SUBJECT_VALUE">全部知识点</option>
             <option v-for="subject in subjects" :key="subject" :value="subject">{{ subject }}</option>
           </select>
         </div>
