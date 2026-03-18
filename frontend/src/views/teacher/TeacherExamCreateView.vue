@@ -61,6 +61,7 @@ const examQuestions = ref<Array<{ question_id: number, stem: string, type: strin
 const isQuestionSelectorOpen = ref(false)
 const isAiAssembleOpen = ref(false)
 const isQuestionsLoading = ref(false)
+const questionLoadError = ref('')
 const isAiAssembling = ref(false)
 
 const questionKeyword = ref('')
@@ -228,15 +229,7 @@ const persistMetaCache = () => {
   }
 }
 
-const filteredQuestionBank = computed(() => {
-  const keyword = questionKeyword.value.trim().toLowerCase()
-  return questionBank.value.filter((q) => {
-    const keywordMatch = !keyword || String(q.stem || '').toLowerCase().includes(keyword)
-    const typeMatch = questionTypeFilter.value === 'all' || q.type === questionTypeFilter.value
-    const subjectMatch = questionSubjectFilter.value === ALL_SUBJECT_VALUE || q.subject === questionSubjectFilter.value
-    return keywordMatch && typeMatch && subjectMatch
-  })
-})
+const filteredQuestionBank = computed(() => questionBank.value)
 
 const goBack = () => {
   router.back()
@@ -434,20 +427,31 @@ onMounted(async () => {
   await hydrateDraftForEdit()
 })
 
+const normalizeQuestionTypeFilter = (typeValue: string) => {
+  if (typeValue === 'all') return undefined
+  if (typeValue === 'blank') return 'fill_blank'
+  if (typeValue === 'essay') return 'short_answer'
+  return typeValue
+}
+
 const fetchQuestionBank = async () => {
-  if (questionBank.value.length > 0) {
-    return
-  }
+  if (!isQuestionSelectorOpen.value) return
 
   try {
     isQuestionsLoading.value = true
+    questionLoadError.value = ''
     const res = await getQuestions({
       page: 1,
       page_size: 100,
+      subject: questionSubjectFilter.value !== ALL_SUBJECT_VALUE ? questionSubjectFilter.value : undefined,
+      type: normalizeQuestionTypeFilter(questionTypeFilter.value),
+      keyword: questionKeyword.value.trim() || undefined,
     })
     questionBank.value = (res as any).items || []
   } catch (error) {
     console.error('Failed to load question bank', error)
+    questionLoadError.value = '题库加载失败，请检查网络后重试'
+    questionBank.value = []
   } finally {
     isQuestionsLoading.value = false
   }
@@ -456,11 +460,13 @@ const fetchQuestionBank = async () => {
 const openQuestionSelector = () => {
   tempSelectedQuestionIds.value = examQuestions.value.map((item) => item.question_id)
   isQuestionSelectorOpen.value = true
+  questionLoadError.value = ''
   void fetchQuestionBank()
 }
 
 const closeQuestionSelector = () => {
   isQuestionSelectorOpen.value = false
+  questionLoadError.value = ''
 }
 
 const toggleTempSelection = (questionId: number) => {
@@ -591,6 +597,14 @@ watch(
     if (aiSubjectFilter.value !== ALL_SUBJECT_VALUE && !nextSubjects.includes(aiSubjectFilter.value)) {
       aiSubjectFilter.value = ALL_SUBJECT_VALUE
     }
+  }
+)
+
+watch(
+  () => [isQuestionSelectorOpen.value, questionSubjectFilter.value, questionTypeFilter.value],
+  async ([isOpen]) => {
+    if (!isOpen) return
+    await fetchQuestionBank()
   }
 )
 
@@ -754,7 +768,13 @@ const getTypeLabel = (type: string) => {
           </button>
         </div>
         <div class="dialog-filters">
-          <input v-model="questionKeyword" class="form-input" type="text" placeholder="搜索题干关键词" />
+          <input
+            v-model="questionKeyword"
+            class="form-input"
+            type="text"
+            placeholder="搜索题干关键词"
+            @keyup.enter="fetchQuestionBank"
+          />
           <AppDropdown
             v-model="questionSubjectFilter"
             class="form-dropdown"
@@ -769,6 +789,7 @@ const getTypeLabel = (type: string) => {
           />
         </div>
         <div class="dialog-list">
+          <p v-if="questionLoadError" class="dialog-error">{{ questionLoadError }}</p>
           <p v-if="isQuestionsLoading" class="dialog-empty">加载题库中...</p>
           <p v-else-if="filteredQuestionBank.length === 0" class="dialog-empty">暂无匹配题目</p>
           <label v-for="q in filteredQuestionBank" :key="q.id" class="pick-item">
@@ -1270,6 +1291,13 @@ const getTypeLabel = (type: string) => {
   text-align: center;
   color: var(--ink-soft);
   font-size: 13px;
+}
+
+.dialog-error {
+  margin: 6px 0;
+  text-align: center;
+  color: #b91c1c;
+  font-size: 12px;
 }
 
 .pick-item {
