@@ -26,6 +26,52 @@ const quickActions = [
 const recentExams = ref<any[]>([])
 const riskStudents = ref<any[]>([])
 
+const parseServerTime = (value: string) => {
+  if (!value) return Number.NaN
+  const hasTimezone = /[zZ]|[+-]\d{2}:\d{2}$/.test(value)
+  return new Date(hasTimezone ? value : `${value}Z`).getTime()
+}
+
+const getEffectiveStatus = (exam: any): 'draft' | 'published' | 'finished' | 'expired' => {
+  const status = String(exam?.status || '')
+  if (status === 'draft') return 'draft'
+  if (status === 'finished') return 'finished'
+  if (status === 'published') {
+    const end = parseServerTime(String(exam?.end_time || ''))
+    if (!Number.isNaN(end) && Date.now() > end) return 'expired'
+    return 'published'
+  }
+  return 'draft'
+}
+
+const getStatusLabel = (exam: any) => {
+  const status = getEffectiveStatus(exam)
+  if (status === 'draft') return '草稿'
+  if (status === 'published') return '进行中'
+  if (status === 'expired') return '已超时'
+  return '已结束'
+}
+
+const goExamAction = (exam: any) => {
+  const status = getEffectiveStatus(exam)
+  if (status === 'draft') {
+    navigate(`/app/teacher/exams/create?exam_id=${exam.id}`)
+    return
+  }
+  if (status === 'finished') {
+    navigate('/app/teacher/review')
+    return
+  }
+  navigate(`/app/teacher/exams/${exam.id}`)
+}
+
+const getExamActionText = (exam: any) => {
+  const status = getEffectiveStatus(exam)
+  if (status === 'draft') return '继续编辑'
+  if (status === 'finished') return '去批阅'
+  return '看详情'
+}
+
 const navigate = (path: string) => {
   router.push(path)
 }
@@ -120,9 +166,14 @@ onMounted(() => {
             </div>
           </div>
           <div class="item-action">
-            <span class="status-indicator" :class="{ 'status--active': exam.status !== 'finished' }">{{ exam.status }}</span>                                                   
-            <button class="button button--small" v-if="exam.status !== 'finished'" @click="navigate('/app/teacher/review')">去批阅</button>
-            <button class="button button--ghost button--small" v-else>看报告</button>
+            <span class="status-indicator" :class="{ 'status--active': getEffectiveStatus(exam) === 'published' }">{{ getStatusLabel(exam) }}</span>
+            <button
+              class="button button--small"
+              :class="{ 'button--ghost': getEffectiveStatus(exam) !== 'finished' }"
+              @click="goExamAction(exam)"
+            >
+              {{ getExamActionText(exam) }}
+            </button>
           </div>
         </div>
       </div>
