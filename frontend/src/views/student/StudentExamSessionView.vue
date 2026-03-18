@@ -5,6 +5,7 @@ import { Clock, ChevronLeft, ChevronRight, Check } from 'lucide-vue-next'
 import { useUiDialog } from '@/composables/useUiDialog'
 import http from '@/lib/http'
 import ImageLightbox from '@/components/common/ImageLightbox.vue'
+import { renderRichContent } from '@/utils/richContent'
 
 const route = useRoute()
 const router = useRouter()
@@ -75,85 +76,13 @@ const answeredCount = computed(() => {
 
 const apiBase = String(import.meta.env.VITE_API_URL || '/api/v1')
 
-const getBackendOrigin = () => {
-  if (/^https?:\/\//i.test(apiBase)) {
-    try {
-      return new URL(apiBase).origin
-    } catch {
-      return ''
-    }
-  }
-  return ''
-}
-
-const normalizeAssetUrl = (rawUrl: string) => {
-  const trimmed = rawUrl.trim()
-  if (!trimmed) return ''
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('//') || trimmed.startsWith('blob:')) {
-    return trimmed
-  }
-  const backendOrigin = getBackendOrigin()
-  if (trimmed.startsWith('/')) {
-    return backendOrigin ? `${backendOrigin}${trimmed}` : trimmed
-  }
-  // 兼容导入题库中的裸文件名，如 t175.png
-  if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(trimmed)) {
-    const path = `/uploads/subject-import/${trimmed.replace(/^\/+/, '')}`
-    return backendOrigin ? `${backendOrigin}${path}` : path
-  }
-  return backendOrigin ? `${backendOrigin}/${trimmed.replace(/^\/+/, '')}` : trimmed
-}
-
-const escapeHtml = (value: string) => {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-const renderFromRichBlocks = (raw: string) => {
-  const trimmed = raw.trim()
-  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return ''
-  try {
-    const blocks = JSON.parse(trimmed)
-    if (!Array.isArray(blocks)) return ''
-    const html = blocks
-      .map((item: any) => {
-        const blockType = String(item?.type || '').toLowerCase()
-        const blockContent = String(item?.content || '')
-        if (blockType === 'image') {
-          const src = normalizeAssetUrl(blockContent)
-          return src ? `<img class="session-rich-image" src="${src}" alt="题目插图" />` : ''
-        }
-        return `<span class="session-rich-text">${escapeHtml(blockContent)}</span>`
-      })
-      .filter(Boolean)
-      .join('')
-    return html
-  } catch {
-    return ''
-  }
-}
-
 const renderQuestionContent = (value: unknown) => {
-  const raw = String(value ?? '')
-  if (!raw.trim()) return ''
-
-  const fromBlocks = renderFromRichBlocks(raw)
-  if (fromBlocks) {
-    return fromBlocks
-  }
-
-  // 兼容 markdown 图片语法
-  const escaped = escapeHtml(raw)
-  return escaped
-    .replace(/!\[[^\]]*\]\(([^)]+)\)/g, (_, src) => {
-      const normalized = normalizeAssetUrl(String(src || ''))
-      return normalized ? `<img class="session-rich-image" src="${normalized}" alt="题目插图" />` : ''
-    })
-    .replace(/\n/g, '<br />')
+  return renderRichContent(value, {
+    apiBase,
+    imageClassName: 'session-rich-image',
+    imageAlt: '题目插图',
+    textClassName: 'session-rich-text',
+  })
 }
 
 // Track answers locally

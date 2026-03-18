@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, CheckCircle2, ImageOff } from 'lucide-vue-next'
 import { getQuestionDetail } from '@/api/teacher'
 import ImageLightbox from '@/components/common/ImageLightbox.vue'
+import { renderRichContent } from '@/utils/richContent'
 
 const route = useRoute()
 const router = useRouter()
@@ -18,83 +19,13 @@ const lightboxAlt = ref('题目插图')
 
 const apiBase = String(import.meta.env.VITE_API_URL || '/api/v1')
 
-const getBackendOrigin = () => {
-  if (/^https?:\/\//i.test(apiBase)) {
-    try {
-      return new URL(apiBase).origin
-    } catch {
-      return ''
-    }
-  }
-  return ''
-}
-
-const normalizeAssetUrl = (rawUrl: string) => {
-  const trimmed = rawUrl.trim()
-  if (!trimmed) return ''
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('//') || trimmed.startsWith('blob:')) {
-    return trimmed
-  }
-  const backendOrigin = getBackendOrigin()
-  if (trimmed.startsWith('/')) {
-    return backendOrigin ? `${backendOrigin}${trimmed}` : trimmed
-  }
-  // 兼容导入题库中的裸文件名，如 t288.png
-  if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(trimmed)) {
-    const path = `/uploads/subject-import/${trimmed.replace(/^\/+/, '')}`
-    return backendOrigin ? `${backendOrigin}${path}` : path
-  }
-  return backendOrigin ? `${backendOrigin}/${trimmed.replace(/^\/+/, '')}` : trimmed
-}
-
-const escapeHtml = (value: string) => {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-const renderFromRichBlocks = (raw: string) => {
-  const trimmed = raw.trim()
-  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return ''
-  try {
-    const blocks = JSON.parse(trimmed)
-    if (!Array.isArray(blocks)) return ''
-    return blocks
-      .map((item: any) => {
-        const blockType = String(item?.type || '').toLowerCase()
-        const blockContent = String(item?.content || '')
-        if (blockType === 'image') {
-          const src = normalizeAssetUrl(blockContent)
-          return src ? `<img class="preview-rich-image" src="${src}" alt="题目插图" />` : ''
-        }
-        return `<span class="preview-rich-text">${escapeHtml(blockContent)}</span>`
-      })
-      .filter(Boolean)
-      .join('')
-  } catch {
-    return ''
-  }
-}
-
 const renderRichText = (value?: unknown) => {
-  const raw = String(value ?? '')
-  if (!raw.trim()) return ''
-
-  const fromBlocks = renderFromRichBlocks(raw)
-  if (fromBlocks) {
-    return fromBlocks
-  }
-
-  const escaped = escapeHtml(raw)
-  return escaped
-    .replace(/!\[[^\]]*\]\(([^)]+)\)/g, (_, src) => {
-      const normalized = normalizeAssetUrl(String(src || ''))
-      return normalized ? `<img class="preview-rich-image" src="${normalized}" alt="题目插图" />` : ''
-    })
-    .replace(/\n/g, '<br />')
+  return renderRichContent(value, {
+    apiBase,
+    imageClassName: 'preview-rich-image',
+    imageAlt: '题目插图',
+    textClassName: 'preview-rich-text',
+  })
 }
 
 const questionTypeText = computed(() => {

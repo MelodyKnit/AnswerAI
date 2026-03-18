@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Brain, CheckCircle2, CircleAlert, RefreshCw } from 'lucide-vue-next'
 import http from '@/lib/http'
 import ImageLightbox from '@/components/common/ImageLightbox.vue'
+import { renderRichContent as renderRichContentHtml } from '@/utils/richContent'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,74 +23,12 @@ const lightboxAlt = ref('题目图片')
 
 const apiBase = String(import.meta.env.VITE_API_URL || '/api/v1')
 
-const getBackendOrigin = () => {
-  if (/^https?:\/\//i.test(apiBase)) {
-    try {
-      return new URL(apiBase).origin
-    } catch {
-      return ''
-    }
-  }
-  return ''
-}
-
-const normalizeAssetUrl = (rawUrl: string) => {
-  const trimmed = rawUrl.trim()
-  if (!trimmed) return ''
-  if (/^https?:\/\//i.test(trimmed) || trimmed.startsWith('//') || trimmed.startsWith('blob:')) {
-    return trimmed
-  }
-  const backendOrigin = getBackendOrigin()
-  if (trimmed.startsWith('/')) {
-    return backendOrigin ? `${backendOrigin}${trimmed}` : trimmed
-  }
-  if (/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(trimmed)) {
-    const path = `/uploads/subject-import/${trimmed.replace(/^\/+/, '')}`
-    return backendOrigin ? `${backendOrigin}${path}` : path
-  }
-  return backendOrigin ? `${backendOrigin}/${trimmed.replace(/^\/+/, '')}` : trimmed
-}
-
-const escapeHtml = (value: string) => {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
 const renderRichContent = (value: unknown) => {
-  const raw = String(value ?? '').trim()
-  if (!raw) return ''
-
-  if (raw.startsWith('[') && raw.endsWith(']')) {
-    try {
-      const blocks = JSON.parse(raw)
-      if (Array.isArray(blocks)) {
-        return blocks
-          .map((block: any) => {
-            const blockType = String(block?.type || '').toLowerCase()
-            const blockContent = String(block?.content || '')
-            if (blockType === 'image') {
-              const src = normalizeAssetUrl(blockContent)
-              return src ? `<img class="analysis-rich-image" src="${src}" alt="题目图片" />` : ''
-            }
-            return `<span>${escapeHtml(blockContent)}</span>`
-          })
-          .join('')
-      }
-    } catch {
-      // fall through to markdown/text mode
-    }
-  }
-
-  return escapeHtml(raw)
-    .replace(/!\[[^\]]*\]\(([^)]+)\)/g, (_, src) => {
-      const normalized = normalizeAssetUrl(String(src || ''))
-      return normalized ? `<img class="analysis-rich-image" src="${normalized}" alt="题目图片" />` : ''
-    })
-    .replace(/\n/g, '<br />')
+  return renderRichContentHtml(value, {
+    apiBase,
+    imageClassName: 'analysis-rich-image',
+    imageAlt: '题目图片',
+  })
 }
 
 const handleImageClick = (event: MouseEvent) => {
