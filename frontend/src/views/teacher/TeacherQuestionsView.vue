@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Database, Eye, Filter, ImagePlus, Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-vue-next'
+import { ChevronDown, Database, Eye, Filter, ImagePlus, Pencil, Plus, Search, Sparkles, Trash2, X } from 'lucide-vue-next'
 import { createQuestion, deleteQuestion, generateQuestionsByAi, getQuestionSubjects, getQuestions, updateQuestion } from '@/api/teacher'
 import { getQuestionTypes } from '@/api/meta'
 import http from '@/lib/http'
@@ -88,6 +88,9 @@ const createDefaultForm = (): FormState => ({
 })
 
 const form = ref<FormState>(createDefaultForm())
+const subjectMenuOpen = ref(false)
+const typeMenuOpen = ref(false)
+const subjectFilterMenuOpen = ref(false)
 
 const isChoiceQuestion = computed(() => ['single_choice', 'multiple_choice'].includes(form.value.type))
 const hasMoreQuestions = computed(() => questions.value.length < totalQuestions.value)
@@ -99,6 +102,77 @@ const loadedSummary = computed(() => {
 const uniqueSubjects = computed(() => {
   return subjects.value
 })
+
+const currentTypeLabel = computed(() => {
+  const current = questionTypes.value.find((item) => item.code === form.value.type)
+  return current?.name || '请选择题型'
+})
+
+const subjectFilterOptions = computed(() => {
+  return ['all', ...uniqueSubjects.value]
+})
+
+const currentSubjectFilterLabel = computed(() => {
+  if (activeSubjectFilter.value === 'all') {
+    return '全部科目'
+  }
+  return activeSubjectFilter.value
+})
+
+const filteredSubjectOptions = computed(() => {
+  const keyword = form.value.subject.trim().toLowerCase()
+  const source = Array.from(
+    new Set(uniqueSubjects.value.map((name) => String(name || '').trim()).filter(Boolean)),
+  )
+  if (!keyword) {
+    return source
+  }
+  const startsWith = source.filter((name) => name.toLowerCase().startsWith(keyword))
+  const includes = source.filter(
+    (name) => !name.toLowerCase().startsWith(keyword) && name.toLowerCase().includes(keyword),
+  )
+  const rest = source.filter(
+    (name) => !name.toLowerCase().startsWith(keyword) && !name.toLowerCase().includes(keyword),
+  )
+  return [...startsWith, ...includes, ...rest]
+})
+
+const onSubjectInput = () => {
+  subjectMenuOpen.value = true
+}
+
+const closeSubjectMenuLater = () => {
+  window.setTimeout(() => {
+    subjectMenuOpen.value = false
+  }, 120)
+}
+
+const chooseSubject = (name: string) => {
+  form.value.subject = name
+  subjectMenuOpen.value = false
+}
+
+const closeTypeMenuLater = () => {
+  window.setTimeout(() => {
+    typeMenuOpen.value = false
+  }, 120)
+}
+
+const chooseType = (code: string) => {
+  form.value.type = code
+  typeMenuOpen.value = false
+}
+
+const closeSubjectFilterMenuLater = () => {
+  window.setTimeout(() => {
+    subjectFilterMenuOpen.value = false
+  }, 120)
+}
+
+const chooseSubjectFilter = (subject: string) => {
+  activeSubjectFilter.value = subject
+  subjectFilterMenuOpen.value = false
+}
 
 const fetchQuestionSubjects = async () => {
   try {
@@ -386,10 +460,12 @@ const buildAnswer = () => {
 }
 
 const submitEditor = async () => {
-  if (!form.value.subject || !form.value.type || !form.value.stem.trim()) {
+  const normalizedSubject = form.value.subject.trim()
+  if (!normalizedSubject || !form.value.type || !form.value.stem.trim()) {
     await ui.alert('请完善科目、题型和题干', { tone: 'warning' })
     return
   }
+  form.value.subject = normalizedSubject
 
   if (form.value.type === 'blank') {
     const hasEmptyBlank = form.value.blankAnswers.some((item) => !item.content.trim())
@@ -414,7 +490,7 @@ const submitEditor = async () => {
   }
 
   const payload = {
-    subject: form.value.subject,
+    subject: normalizedSubject,
     type: form.value.type,
     stem: form.value.stem.trim(),
     options,
@@ -669,24 +745,65 @@ const generateByAiAndApply = async () => {
         <div class="editor-grid">
         <label class="form-field">
           <span>科目</span>
-          <div class="subject-input-wrapper">
-            <input 
-              v-model="form.subject" 
-              class="form-input" 
-              list="subject-list" 
-              placeholder="请选择或输入科目" 
-            />
-            <datalist id="subject-list">
-              <option v-for="sub in uniqueSubjects" :key="sub" :value="sub"></option>
-            </datalist>
+          <div class="subject-combobox" @focusout="closeSubjectMenuLater">
+            <div class="subject-input-wrapper">
+              <input
+                v-model="form.subject"
+                class="form-input"
+                placeholder="请选择或输入科目"
+                @focus="subjectMenuOpen = true"
+                @input="onSubjectInput"
+              />
+              <button
+                type="button"
+                class="subject-toggle"
+                aria-label="展开科目列表"
+                @mousedown.prevent="subjectMenuOpen = !subjectMenuOpen"
+              >
+                <ChevronDown :size="16" :class="{ 'is-open': subjectMenuOpen }" />
+              </button>
+            </div>
+            <div v-if="subjectMenuOpen" class="subject-menu">
+              <button
+                v-for="sub in filteredSubjectOptions"
+                :key="sub"
+                type="button"
+                class="subject-menu-item"
+                @mousedown.prevent="chooseSubject(sub)"
+              >
+                {{ sub }}
+              </button>
+              <p v-if="filteredSubjectOptions.length === 0" class="subject-menu-empty">
+                暂无匹配项，直接保存可创建新科目
+              </p>
+            </div>
           </div>
         </label>
 
         <label class="form-field">
           <span>题型</span>
-          <select v-model="form.type" class="form-input">
-            <option v-for="item in questionTypes" :key="item.code" :value="item.code">{{ item.name }}</option>
-          </select>
+          <div class="dropdown" @focusout="closeTypeMenuLater">
+            <button
+              type="button"
+              class="form-input dropdown-trigger"
+              @mousedown.prevent="typeMenuOpen = !typeMenuOpen"
+            >
+              <span>{{ currentTypeLabel }}</span>
+              <ChevronDown :size="16" :class="{ 'is-open': typeMenuOpen }" />
+            </button>
+            <div v-if="typeMenuOpen" class="dropdown-menu">
+              <button
+                v-for="item in questionTypes"
+                :key="item.code"
+                type="button"
+                class="dropdown-item"
+                :class="{ active: form.type === item.code }"
+                @mousedown.prevent="chooseType(item.code)"
+              >
+                {{ item.name }}
+              </button>
+            </div>
+          </div>
         </label>
 
         <label class="form-field field-full">
@@ -856,10 +973,28 @@ const generateByAiAndApply = async () => {
         <Search :size="16" class="search-icon" />
         <input type="text" placeholder="搜索题目内容、知识点..." class="search-input" v-model="keyword" @keyup.enter="fetchQuestions(true)" />
       </div>
-      <select v-model="activeSubjectFilter" class="subject-filter-select">
-        <option value="all">全部科目</option>
-        <option v-for="sub in uniqueSubjects" :key="sub" :value="sub">{{ sub }}</option>
-      </select>
+      <div class="subject-filter-wrap" @focusout="closeSubjectFilterMenuLater">
+        <button
+          type="button"
+          class="subject-filter-select dropdown-trigger"
+          @mousedown.prevent="subjectFilterMenuOpen = !subjectFilterMenuOpen"
+        >
+          <span>{{ currentSubjectFilterLabel }}</span>
+          <ChevronDown :size="16" :class="{ 'is-open': subjectFilterMenuOpen }" />
+        </button>
+        <div v-if="subjectFilterMenuOpen" class="dropdown-menu subject-filter-menu">
+          <button
+            v-for="sub in subjectFilterOptions"
+            :key="sub"
+            type="button"
+            class="dropdown-item"
+            :class="{ active: activeSubjectFilter === sub }"
+            @mousedown.prevent="chooseSubjectFilter(sub)"
+          >
+            {{ sub === 'all' ? '全部科目' : sub }}
+          </button>
+        </div>
+      </div>
       <button class="icon-button filter-btn" @click="fetchQuestions(true)">
         <Filter :size="18" />
       </button>
@@ -1102,10 +1237,130 @@ const generateByAiAndApply = async () => {
 
 .subject-input-wrapper {
   width: 100%;
+  position: relative;
 }
 .subject-input-wrapper .form-input {
   width: 100%;
   box-sizing: border-box;
+  padding-right: 40px;
+}
+
+.subject-combobox {
+  position: relative;
+}
+
+.subject-toggle {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.subject-toggle:hover {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.subject-toggle .is-open {
+  transform: rotate(180deg);
+}
+
+.subject-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+}
+
+.subject-menu-item {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: 14px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.subject-menu-item:hover {
+  background: #eff6ff;
+  color: var(--accent);
+}
+
+.subject-menu-empty {
+  margin: 6px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.dropdown {
+  position: relative;
+}
+
+.dropdown-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.dropdown-trigger .is-open {
+  transform: rotate(180deg);
+}
+
+.dropdown-menu {
+  position: absolute;
+  z-index: 22;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 14px 26px rgba(15, 23, 42, 0.12);
+  padding: 6px;
+}
+
+.dropdown-item {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-size: 14px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.dropdown-item:hover,
+.dropdown-item.active {
+  background: #eff6ff;
+  color: var(--accent);
 }
 
 .options-field {
@@ -1294,6 +1549,7 @@ const generateByAiAndApply = async () => {
   margin: 0;
 }
 .no-spin {
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 
@@ -1437,6 +1693,20 @@ const generateByAiAndApply = async () => {
   color: var(--ink);
   padding: 0 12px;
   font-size: 14px;
+  min-height: 42px;
+}
+
+.subject-filter-wrap {
+  position: relative;
+  min-width: 132px;
+}
+
+.subject-filter-wrap .subject-filter-select {
+  width: 100%;
+}
+
+.subject-filter-menu {
+  z-index: 18;
 }
 
 .search-bar {

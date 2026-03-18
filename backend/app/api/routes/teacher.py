@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role
@@ -3318,12 +3319,44 @@ def _get_subject_by_name(db: Session, subject_name: str) -> Subject:
     """
     处理  get subject by name 请求并返回结果。
     """
-    subject_obj = db.scalar(select(Subject).where(Subject.name == subject_name))
-    if not subject_obj:
+    normalized_name = (subject_name or "").strip()
+    if not normalized_name:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="科目不能为空"
         )
-    return subject_obj
+
+    subject_obj = db.scalar(select(Subject).where(Subject.name == normalized_name))
+    if not subject_obj:
+        subject_obj = db.scalar(
+            select(Subject).where(func.lower(Subject.name) == normalized_name.lower())
+        )
+    if subject_obj:
+        return subject_obj
+
+    # 题目编辑/创建允许写入新科目：首次使用即自动建档。
+    new_subject = Subject(
+        code=f"SUBJ-{uuid4().hex[:10]}",
+        name=normalized_name,
+        sort_order=0,
+        status="active",
+    )
+    db.add(new_subject)
+    try:
+        db.flush()
+        return new_subject
+    except IntegrityError:
+        db.rollback()
+        subject_obj = db.scalar(select(Subject).where(Subject.name == normalized_name))
+        if not subject_obj:
+            subject_obj = db.scalar(
+                select(Subject).where(func.lower(Subject.name) == normalized_name.lower())
+            )
+        if subject_obj:
+            return subject_obj
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="科目创建冲突，请重试",
+        )
 
 
 def _get_teacher_class(db: Session, teacher_id: int, class_id: int) -> ClassRoom:
