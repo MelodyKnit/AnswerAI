@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { Loader2, MessageSquareWarning, Plus, Send, X } from 'lucide-vue-next'
 import { uploadImage } from '@/api/upload'
 import { submitUserFeedback, type FeedbackCategory } from '@/api/feedback'
+import AppDropdown from '@/components/common/AppDropdown.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -130,9 +131,12 @@ const submitFeedback = async () => {
           <div class="feedback-body">
             <label class="field">
               <span>反馈类型</span>
-              <select v-model="category">
-                <option v-for="item in categoryOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
-              </select>
+              <AppDropdown
+                v-model="category"
+                class="feedback-category-dropdown"
+                :options="categoryOptions"
+                aria-label="反馈类型"
+              />
             </label>
 
             <label class="field">
@@ -287,7 +291,6 @@ const submitFeedback = async () => {
   color: #4b5f58;
 }
 
-.field select,
 .field textarea {
   border: 1px solid #cfdbd7;
   border-radius: 10px;
@@ -295,6 +298,17 @@ const submitFeedback = async () => {
   padding: 8px 10px;
   font-size: 14px;
   color: #17211d;
+}
+
+.feedback-category-dropdown {
+  width: 100%;
+}
+
+.feedback-category-dropdown :deep(.app-dropdown-trigger) {
+  min-height: 40px;
+  border-color: #cfdbd7;
+  border-radius: 10px;
+  font-size: 14px;
 }
 
 .field textarea {

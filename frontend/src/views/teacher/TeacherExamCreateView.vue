@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ArrowLeft, Play, Sparkles, Save } from 'lucide-vue-next'
 import { useUiDialog } from '@/composables/useUiDialog'
 import { assembleExamByAi, createExam, getClasses, getExams, getQuestionSubjects, getQuestions } from '@/api/teacher'
+import AppDropdown from '@/components/common/AppDropdown.vue'
 
 const router = useRouter()
 const ALL_SUBJECT_VALUE = '__all__'
@@ -74,6 +75,11 @@ const questionTypeOptions = [
   { value: 'blank', label: '填空题' },
   { value: 'essay', label: '简答题' },
 ]
+
+const subjectOptions = computed(() => {
+  const dynamic = subjects.value.map((subject) => ({ label: subject, value: subject }))
+  return [{ label: '全部知识点', value: ALL_SUBJECT_VALUE }, ...dynamic]
+})
 
 const totalScore = computed(() => {
   return examQuestions.value.reduce((sum, item) => sum + Number(item.score || 0), 0)
@@ -531,10 +537,12 @@ const getTypeLabel = (type: string) => {
       <div class="form-row">
         <div class="form-group">
           <label>知识点</label>
-          <select v-model="form.subject" class="form-input">
-            <option :value="ALL_SUBJECT_VALUE">全部知识点</option>
-            <option v-for="subject in subjects" :key="subject" :value="subject">{{ subject }}</option>
-          </select>
+          <AppDropdown
+            v-model="form.subject"
+            class="form-dropdown"
+            :options="subjectOptions"
+            aria-label="知识点选择"
+          />
         </div>
         <div class="form-group">
           <label>总分上限</label>
@@ -652,9 +660,12 @@ const getTypeLabel = (type: string) => {
         </div>
         <div class="dialog-filters">
           <input v-model="questionKeyword" class="form-input" type="text" placeholder="搜索题干关键词" />
-          <select v-model="questionTypeFilter" class="form-input">
-            <option v-for="option in questionTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-          </select>
+          <AppDropdown
+            v-model="questionTypeFilter"
+            class="form-dropdown"
+            :options="questionTypeOptions"
+            aria-label="题型筛选"
+          />
         </div>
         <div class="dialog-list">
           <p v-if="isQuestionsLoading" class="dialog-empty">加载题库中...</p>
@@ -918,6 +929,16 @@ const getTypeLabel = (type: string) => {
 
 .form-input:focus {
   border-color: var(--accent);
+}
+
+.form-dropdown {
+  width: 100%;
+}
+
+.form-dropdown :deep(.app-dropdown-trigger) {
+  min-height: 46px;
+  border-radius: var(--radius-md);
+  font-size: 15px;
 }
 
 .add-questions {

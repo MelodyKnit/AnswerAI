@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { Plus, Search, FileText, ChevronRight, Trash2 } from 'lucide-vue-next'
 import { useUiDialog } from '@/composables/useUiDialog'
 import { deleteExam, getExams } from '@/api/teacher'
+import AppDropdown from '@/components/common/AppDropdown.vue'
 
 const router = useRouter()
 const exams = ref<any[]>([])
@@ -11,6 +12,13 @@ const isLoading = ref(true)
 const filterStatus = ref('all') // all, draft, published, finished
 const keyword = ref('')
 const ui = useUiDialog()
+
+const statusOptions = [
+  { label: '所有状态', value: 'all' },
+  { label: '草稿', value: 'draft' },
+  { label: '进行中', value: 'published' },
+  { label: '已结束', value: 'finished' },
+]
 
 const parseServerTime = (value: string) => {
   if (!value) return Number.NaN
@@ -107,6 +115,10 @@ const getStatusText = (exam: any) => {
       return String(exam?.status || '未知')
   }
 }
+
+const handleStatusChange = async () => {
+  await fetchExams()
+}
 </script>
 
 <template>
@@ -127,12 +139,13 @@ const getStatusText = (exam: any) => {
         <Search :size="16" class="search-icon" />
         <input type="text" placeholder="搜索试卷名称..." class="search-input" v-model="keyword" @keyup.enter="fetchExams" />
       </div>
-      <select class="status-select" v-model="filterStatus" @change="fetchExams">
-        <option value="all">所有状态</option>
-        <option value="draft">草稿</option>
-        <option value="published">进行中</option>
-        <option value="finished">已结束</option>
-      </select>
+      <AppDropdown
+        v-model="filterStatus"
+        class="status-select"
+        :options="statusOptions"
+        aria-label="考试状态筛选"
+        @change="handleStatusChange"
+      />
     </div>
 
     <div v-if="isLoading" class="loading-state">加载中...</div>
@@ -216,12 +229,14 @@ const getStatusText = (exam: any) => {
 }
 
 .filter-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 12px;
 }
 
 .search-box {
-  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -244,13 +259,7 @@ const getStatusText = (exam: any) => {
 }
 
 .status-select {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 0 12px;
-  background: #fff;
-  font-size: 14px;
-  color: var(--ink);
-  outline: none;
+  width: clamp(108px, 30vw, 132px);
 }
 
 .exam-list {
@@ -371,6 +380,15 @@ const getStatusText = (exam: any) => {
 }
 
 @media (max-width: 768px) {
+  .filter-bar {
+    grid-template-columns: minmax(0, 1fr) 112px;
+    gap: 8px;
+  }
+
+  .status-select {
+    width: 100%;
+  }
+
   .exam-card {
     align-items: flex-start;
   }

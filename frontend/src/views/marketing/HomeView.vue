@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowRight, Bot } from 'lucide-vue-next'
-import heroBg from '@/assets/bg2.png'
+import heroBg from '@/assets/bg1.png'
 
 const pageBackgroundStyle = {
   backgroundImage: `linear-gradient(rgba(246, 248, 251, 0.74), rgba(246, 248, 251, 0.74)), url(${heroBg})`,

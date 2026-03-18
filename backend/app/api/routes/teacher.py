@@ -1966,6 +1966,7 @@ def get_exam_insights(
             select(func.distinct(ExamSubmission.student_id))
             .join(SubmissionAnswer, SubmissionAnswer.submission_id == ExamSubmission.id)
             .where(
+                ExamSubmission.exam_id == exam.id,
                 SubmissionAnswer.exam_id == exam.id,
                 SubmissionAnswer.is_correct.is_not(None),
             )

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { Settings, UserPlus, Download, X, Loader2, Trash2, BrainCircuit, Search } from 'lucide-vue-next'
 import { useUiDialog } from '@/composables/useUiDialog'
 import { getClassDetail, getClassStudents, inviteStudentToClass, removeStudentFromClass, getTeacherDashboardOverview } from '@/api/teacher'
+import AppDropdown from '@/components/common/AppDropdown.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -14,6 +15,13 @@ const students = ref<any[]>([])
 const isLoading = ref(true)
 const keyword = ref('')
 const riskFilter = ref<'all' | 'high' | 'medium' | 'low' | 'unknown'>('all')
+const riskFilterOptions = [
+  { label: '全部风险', value: 'all' },
+  { label: '仅看高危', value: 'high' },
+  { label: '仅看预警', value: 'medium' },
+  { label: '仅看关注', value: 'low' },
+  { label: '仅看待评估', value: 'unknown' },
+]
 
 const showInviteModal = ref(false)
 const inviteStudentIdInput = ref('')
@@ -296,13 +304,12 @@ const removeStudent = async (student: any) => {
             />
           </label>
 
-          <select v-model="riskFilter" class="risk-select" aria-label="风险筛选">
-            <option value="all">全部风险</option>
-            <option value="high">仅看高危</option>
-            <option value="medium">仅看预警</option>
-            <option value="low">仅看关注</option>
-            <option value="unknown">仅看待评估</option>
-          </select>
+          <AppDropdown
+            v-model="riskFilter"
+            class="risk-select"
+            :options="riskFilterOptions"
+            aria-label="风险筛选"
+          />
         </div>
 
         <div class="list-container" v-if="filteredStudents.length > 0">
@@ -611,13 +618,7 @@ const removeStudent = async (student: any) => {
 }
 
 .risk-select {
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 0 10px;
-  height: 36px;
-  font-size: 13px;
-  color: var(--ink);
-  background: #fff;
+  min-width: 136px;
 }
 
 .list-container {

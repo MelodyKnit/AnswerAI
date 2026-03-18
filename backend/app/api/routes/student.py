@@ -395,6 +395,7 @@ def save_answer(payload: SaveAnswerRequest, current_user: User = Depends(require
     """
     _get_student_exam(db, current_user.id, payload.exam_id)
     submission = _resolve_student_submission_for_exam(db, current_user.id, payload.exam_id, payload.submission_id)
+    _ensure_question_belongs_to_exam(db, payload.exam_id, payload.question_id)
     answer = db.scalar(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id, SubmissionAnswer.question_id == payload.question_id))
     if not answer:
         answer = SubmissionAnswer(submission_id=submission.id, exam_id=payload.exam_id, question_id=payload.question_id)
@@ -422,8 +423,19 @@ def save_answers_batch(payload: BatchSaveAnswerRequest, current_user: User = Dep
     """
     _get_student_exam(db, current_user.id, payload.exam_id)
     submission = _resolve_student_submission_for_exam(db, current_user.id, payload.exam_id, payload.submission_id)
+    valid_question_ids = set(
+        int(item)
+        for item in db.scalars(
+            select(ExamQuestion.question_id).where(ExamQuestion.exam_id == payload.exam_id)
+        ).all()
+    )
     saved_count = 0
     for item in payload.answers:
+        if int(item.question_id) not in valid_question_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Question {item.question_id} does not belong to exam {payload.exam_id}",
+            )
         answer = db.scalar(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id, SubmissionAnswer.question_id == item.question_id))
         if not answer:
             answer = SubmissionAnswer(submission_id=submission.id, exam_id=payload.exam_id, question_id=item.question_id)
@@ -503,6 +515,9 @@ def submit_exam(payload: SubmitExamRequest, current_user: User = Depends(require
     triggered_tasks = []
 
     for answer in answers:
+        if int(answer.question_id) not in question_score_map:
+            # 严格限制：当前考试提交只处理本场试卷中的题目，防止跨考试污染。
+            continue
         question = db.get(Question, answer.question_id)
         if not question:
             continue
@@ -1107,25 +1122,34 @@ def _get_student_submission(db: Session, student_id: int, submission_id: int) ->
 
 def _resolve_student_submission_for_exam(db: Session, student_id: int, exam_id: int, submission_id: int) -> ExamSubmission:
     """
-    保证 submission_id 与 exam_id 一致。
-    若前端携带了历史 submission_id，自动回退到该学生在当前考试下的真实 submission。
+    保证 submission_id 与 exam_id 严格一致。
+    任何不一致都直接拒绝，避免跨考试状态串写。
     """
     submission = _get_student_submission(db, student_id, submission_id)
-    if submission.exam_id == exam_id:
-        return submission
-
-    fallback = db.scalar(
-        select(ExamSubmission)
-        .where(
-            ExamSubmission.exam_id == exam_id,
-            ExamSubmission.student_id == student_id,
+    if submission.exam_id != exam_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Submission {submission_id} does not belong to exam {exam_id}"
+            ),
         )
-        .order_by(ExamSubmission.created_at.desc(), ExamSubmission.id.desc())
-    )
-    if fallback:
-        return fallback
+    return submission
 
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Submission does not belong to this exam")
+
+def _ensure_question_belongs_to_exam(db: Session, exam_id: int, question_id: int) -> None:
+    exists = db.scalar(
+        select(func.count())
+        .select_from(ExamQuestion)
+        .where(
+            ExamQuestion.exam_id == exam_id,
+            ExamQuestion.question_id == question_id,
+        )
+    ) or 0
+    if int(exists) <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Question {question_id} does not belong to exam {exam_id}",
+        )
 
 
 def _as_utc(dt: datetime) -> datetime:
@@ -1175,6 +1199,11 @@ def _serialize_exam_list_item(db: Session, exam: Exam, student_id: int) -> dict:
         answered_count = db.scalar(
             select(func.count())
             .select_from(SubmissionAnswer)
+            .join(
+                ExamQuestion,
+                (ExamQuestion.exam_id == exam.id)
+                & (ExamQuestion.question_id == SubmissionAnswer.question_id),
+            )
             .where(
                 SubmissionAnswer.submission_id == submission.id,
                 (SubmissionAnswer.answer_content != None) | (SubmissionAnswer.answer_text != None),

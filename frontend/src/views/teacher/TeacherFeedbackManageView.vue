@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { Filter, Image as ImageIcon, MessageSquareWarning, RefreshCw, Search } from 'lucide-vue-next'
 import ImageLightbox from '@/components/common/ImageLightbox.vue'
 import { getTeacherFeedbackList, type TeacherFeedbackItem } from '@/api/teacher'
+import AppDropdown from '@/components/common/AppDropdown.vue'
 
 type Category = 'all' | 'bug' | 'product' | 'design' | 'other'
 
@@ -123,9 +124,13 @@ onMounted(async () => {
       <div class="filter-row">
         <label class="select-wrap">
           <Filter :size="14" />
-          <select v-model="category" @change="applyFilter">
-            <option v-for="item in categoryOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
-          </select>
+          <AppDropdown
+            v-model="category"
+            class="feedback-select"
+            :options="categoryOptions"
+            aria-label="反馈分类筛选"
+            @change="applyFilter"
+          />
         </label>
 
         <label class="search-wrap">
@@ -257,7 +262,6 @@ onMounted(async () => {
   color: #64748b;
 }
 
-.select-wrap select,
 .search-wrap input {
   width: 100%;
   border: none;
@@ -265,6 +269,23 @@ onMounted(async () => {
   background: transparent;
   font-size: 13px;
   color: #0f172a;
+}
+
+.feedback-select {
+  width: 100%;
+}
+
+.feedback-select :deep(.app-dropdown-trigger) {
+  min-height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+}
+
+.feedback-select :deep(.app-dropdown-menu) {
+  top: calc(100% + 6px);
 }
 
 .refresh-btn {
