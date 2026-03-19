@@ -67,10 +67,15 @@ QUESTION_TYPE_LABELS = {
     "single_choice": "单选题",
     "multiple_choice": "多选题",
     "judge": "判断题",
+    "true_false": "判断题",
+    "blank": "填空题",
     "fill_blank": "填空题",
     "short_answer": "简答题",
+    "material": "材料题",
     "essay": "论述题",
 }
+
+SUBJECTIVE_QUESTION_TYPES = {"short_answer", "essay", "material"}
 
 
 def _to_utc_aware(value: datetime) -> datetime:
@@ -94,11 +99,73 @@ def _question_type_label(question_type: str | None) -> str:
     return QUESTION_TYPE_LABELS.get(key, key or "未分类")
 
 
+def _shorten_text(text: str, limit: int = 28) -> str:
+    normalized = re.sub(r"\s+", " ", str(text or "").strip())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: max(0, limit - 1)]}…"
+
+
+def _answer_preview(answer_text: Any, answer_content: Any) -> str:
+    text = str(answer_text or "").strip()
+    if text:
+        return _shorten_text(text, 40)
+
+    raw_content = str(answer_content or "").strip()
+    if not raw_content:
+        return ""
+
+    try:
+        parsed = json.loads(raw_content)
+        if isinstance(parsed, list):
+            merged = "、".join(str(item).strip() for item in parsed if str(item).strip())
+            return _shorten_text(merged, 40)
+        if isinstance(parsed, dict):
+            return _shorten_text(", ".join(f"{k}:{v}" for k, v in parsed.items()), 40)
+    except Exception:
+        pass
+
+    return _shorten_text(raw_content, 40)
+
+
+def _extract_stem_keywords(stem: str) -> list[str]:
+    tokens = re.findall(r"[\u4e00-\u9fa5]{2,8}", str(stem or ""))
+    stopwords = {
+        "下列",
+        "以下",
+        "关于",
+        "正确",
+        "错误",
+        "选项",
+        "题目",
+        "选择",
+        "根据",
+        "已知",
+        "请判断",
+        "请作答",
+        "求解",
+        "计算",
+    }
+    output: list[str] = []
+    seen: set[str] = set()
+    for token in tokens:
+        if token in stopwords or token in seen:
+            continue
+        seen.add(token)
+        output.append(token)
+        if len(output) >= 3:
+            break
+    return output
+
+
 def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
     overview = payload["overview"]
     weak_points = payload["weak_knowledge_points"]
     focus_students = payload["focus_students"]
     risk_distribution = payload["risk_distribution"]
+    weak_question_signals = payload.get("weak_question_signals") or []
+    answer_diagnostics = payload.get("answer_diagnostics") or []
+    type_performance = payload.get("question_type_performance") or []
     high_risk_count = next(
         (int(item["count"]) for item in risk_distribution if item["level"] == "high"), 0
     )
@@ -121,11 +188,31 @@ def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
         )
     if weak_points:
         summary_parts.append(f"薄弱点主要集中在 {weak_points[0]['name']} 等知识点。")
+    if weak_question_signals:
+        top_question = weak_question_signals[0]
+        summary_parts.append(
+            f"题目层面，{top_question['title']} 的错率约 {round(float(top_question.get('wrong_rate', 0)) * 100)}%，建议优先讲评。"
+        )
+    if answer_diagnostics:
+        top_diag = answer_diagnostics[0]
+        summary_parts.append(
+            f"作答行为上，最突出问题是“{top_diag['label']}”（占错误样本 {round(float(top_diag.get('ratio', 0)) * 100)}%）。"
+        )
 
     actions: list[str] = []
     if weak_points:
         actions.append(
             f"围绕 {weak_points[0]['name']} 组织一次 15 分钟讲评，再配 2 道同类题即时巩固。"
+        )
+    if weak_question_signals:
+        top_question = weak_question_signals[0]
+        actions.append(
+            f"对“{top_question['title']}”做错因拆解示范：先展示典型错误，再回到标准步骤，最后补1道同构题。"
+        )
+    if type_performance:
+        top_type = type_performance[0]
+        actions.append(
+            f"题型层面建议优先处理 {top_type['label']}，当前错率约 {round(float(top_type.get('wrong_rate', 0)) * 100)}%。"
         )
     if high_risk_count:
         actions.append("先锁定高风险学生，按错题原因分组，安排短时面批和针对训练。")
@@ -138,9 +225,28 @@ def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
     if not actions:
         actions.append("整体表现较稳定，建议保持每周小测并继续按错题主题做滚动复盘。")
 
+    findings: list[str] = []
+    if weak_points:
+        findings.append(f"高频薄弱点：{weak_points[0]['name']}（错误样本 {weak_points[0]['count']}）。")
+    if weak_question_signals:
+        top_question = weak_question_signals[0]
+        findings.append(
+            f"高错题画像：{top_question['title']}，错率 {round(float(top_question.get('wrong_rate', 0)) * 100)}%，平均作答 {int(top_question.get('avg_spent_seconds', 0))} 秒。"
+        )
+    if answer_diagnostics:
+        top_diag = answer_diagnostics[0]
+        findings.append(
+            f"主要错误行为：{top_diag['label']}（{int(top_diag.get('count', 0))} 次），提示 {top_diag.get('description', '')}"
+        )
+    if high_risk_count or medium_risk_count:
+        findings.append(
+            f"风险结构：高风险 {high_risk_count} 人，预警 {medium_risk_count} 人，建议按分层目标推进。"
+        )
+
     return {
         "summary": "".join(summary_parts),
         "actions": actions[:4],
+        "findings": findings[:5],
     }
 
 
@@ -607,8 +713,39 @@ def get_class_students(
         query = query.where(User.name.contains(keyword))
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     items = db.scalars(query.offset((page - 1) * page_size).limit(page_size)).all()
+
+    student_ids = [int(item.id) for item in items]
+    latest_submission_by_student: dict[int, ExamSubmission] = {}
+    if student_ids:
+        latest_submissions = db.scalars(
+            select(ExamSubmission)
+            .where(ExamSubmission.teacher_id == current_user.id)
+            .where(ExamSubmission.class_id == class_id)
+            .where(ExamSubmission.student_id.in_(student_ids))
+            .where(ExamSubmission.status.in_(["submitted", "completed", "reviewed"]))
+            .order_by(ExamSubmission.submitted_at.desc(), ExamSubmission.created_at.desc())
+        ).all()
+        for submission in latest_submissions:
+            sid = int(submission.student_id)
+            if sid in latest_submission_by_student:
+                continue
+            latest_submission_by_student[sid] = submission
+
+    normalized_risk = str(risk_level or "").strip().lower()
+    valid_risk = {"high", "medium", "low", "unknown"}
+    requested_risk = normalized_risk if normalized_risk in valid_risk else None
+
     serialized = []
     for item in items:
+        latest = latest_submission_by_student.get(int(item.id))
+        resolved_risk = "unknown"
+        if latest is not None:
+            resolved_risk = _teacher_student_risk_level(
+                float(latest.total_score or 0),
+                float(latest.correct_rate or 0),
+            )
+        if requested_risk and resolved_risk != requested_risk:
+            continue
         serialized.append(
             {
                 "id": item.id,
@@ -616,7 +753,7 @@ def get_class_students(
                 "email": item.email,
                 "phone": item.phone,
                 "grade_name": item.grade_name,
-                "risk_level": risk_level or "unknown",
+                "risk_level": resolved_risk,
             }
         )
     return success_response({"items": serialized, "total": total})
@@ -661,6 +798,8 @@ def get_class_analysis(
             "score_distribution": [],
             "exam_trend": [],
             "weak_knowledge_points": [],
+            "weak_question_signals": [],
+            "answer_diagnostics": [],
             "question_type_performance": [],
             "focus_students": [],
             "student_risks": [],
@@ -670,6 +809,7 @@ def get_class_analysis(
             "actions": [
                 "先完成班级组建并发布一次基础测验，系统会自动生成班级学习分析。"
             ],
+            "findings": [],
         }
         return success_response(empty_payload)
 
@@ -813,7 +953,12 @@ def get_class_analysis(
         .limit(8)
     ).all()
     weak_knowledge_points = [
-        {"name": str(row.name or "未命名知识点"), "count": int(row.wrong_count or 0)}
+        {
+            "name": str(row.name or "未命名知识点"),
+            "count": int(row.wrong_count or 0),
+            "source": "knowledge_point",
+            "source_label": "知识点映射",
+        }
         for row in weak_point_rows
         if int(row.wrong_count or 0) > 0
     ]
@@ -852,6 +997,169 @@ def get_class_analysis(
         if int(row.question_count or 0) > 0
     ]
 
+    answer_rows = db.execute(
+        select(
+            SubmissionAnswer.question_id,
+            SubmissionAnswer.is_correct,
+            SubmissionAnswer.answer_content,
+            SubmissionAnswer.answer_text,
+            SubmissionAnswer.spent_seconds,
+            Question.stem,
+            Question.type,
+        )
+        .select_from(SubmissionAnswer)
+        .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
+        .join(Question, Question.id == SubmissionAnswer.question_id)
+        .where(
+            ExamSubmission.class_id == class_id,
+            ExamSubmission.teacher_id == current_user.id,
+            ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
+        )
+    ).all()
+
+    question_signals_map: dict[int, dict[str, Any]] = {}
+    diagnosis_counter = {
+        "blank_answer": 0,
+        "short_subjective": 0,
+        "objective_confusion": 0,
+    }
+    total_wrong_answers = 0
+
+    for row in answer_rows:
+        question_id = int(row.question_id)
+        q_type = str(row.type or "").strip().lower()
+        stem = str(row.stem or "")
+
+        signal = question_signals_map.setdefault(
+            question_id,
+            {
+                "question_id": question_id,
+                "title": _shorten_text(stem, 30) or f"题目#{question_id}",
+                "stem_source": stem,
+                "type": q_type,
+                "type_label": _question_type_label(q_type),
+                "attempt_count": 0,
+                "wrong_count": 0,
+                "spent_total": 0,
+                "wrong_samples": [],
+            },
+        )
+
+        signal["attempt_count"] += 1
+        signal["spent_total"] += int(row.spent_seconds or 0)
+
+        is_wrong = row.is_correct is False
+        if not is_wrong:
+            continue
+
+        total_wrong_answers += 1
+        signal["wrong_count"] += 1
+
+        preview = _answer_preview(row.answer_text, row.answer_content)
+        if preview and len(signal["wrong_samples"]) < 2:
+            signal["wrong_samples"].append(preview)
+
+        if not preview:
+            diagnosis_counter["blank_answer"] += 1
+        elif q_type in SUBJECTIVE_QUESTION_TYPES and len(preview) < 8:
+            diagnosis_counter["short_subjective"] += 1
+        elif q_type not in SUBJECTIVE_QUESTION_TYPES:
+            diagnosis_counter["objective_confusion"] += 1
+
+    weak_question_signals = []
+    for item in question_signals_map.values():
+        attempts = int(item["attempt_count"])
+        wrong = int(item["wrong_count"])
+        if attempts <= 0 or wrong <= 0:
+            continue
+        weak_question_signals.append(
+            {
+                "question_id": item["question_id"],
+                "title": item["title"],
+                "type": item["type"],
+                "type_label": item["type_label"],
+                "attempt_count": attempts,
+                "wrong_count": wrong,
+                "wrong_rate": round(wrong / max(attempts, 1), 2),
+                "avg_spent_seconds": int(item["spent_total"] / max(attempts, 1)),
+                "sample_wrong_answer": item["wrong_samples"][0] if item["wrong_samples"] else "",
+                "stem_source": item["stem_source"],
+            }
+        )
+
+    weak_question_signals.sort(
+        key=lambda item: (
+            -float(item["wrong_rate"]),
+            -int(item["wrong_count"]),
+            -int(item["attempt_count"]),
+        )
+    )
+    weak_question_signals = weak_question_signals[:8]
+
+    if not weak_knowledge_points:
+        keyword_counter: dict[str, int] = {}
+        for item in weak_question_signals:
+            for keyword in _extract_stem_keywords(str(item.get("stem_source") or "")):
+                keyword_counter[keyword] = keyword_counter.get(keyword, 0) + int(item["wrong_count"])
+        weak_knowledge_points = [
+            {
+                "name": key,
+                "count": value,
+                "source": "stem_keyword",
+                "source_label": "题干关键词",
+            }
+            for key, value in sorted(keyword_counter.items(), key=lambda kv: kv[1], reverse=True)[:6]
+        ]
+
+    if not weak_knowledge_points and question_type_performance:
+        weak_knowledge_points = [
+            {
+                "name": f"{item['label']}能力",
+                "count": max(
+                    1,
+                    int(
+                        round(
+                            float(item.get("wrong_rate", 0)) * float(item.get("question_count", 0))
+                        )
+                    ),
+                ),
+                "source": "question_type",
+                "source_label": "题型归因",
+            }
+            for item in question_type_performance[:4]
+            if float(item.get("wrong_rate", 0)) > 0
+        ]
+
+    diagnosis_meta = {
+        "blank_answer": {
+            "label": "空白或缺失作答",
+            "description": "存在未写或未有效提交答案的情况，需强化作答完整性。",
+        },
+        "short_subjective": {
+            "label": "主观题作答过短",
+            "description": "主观题答案信息量不足，建议训练“步骤+结论”的完整表达。",
+        },
+        "objective_confusion": {
+            "label": "客观题选项辨析偏弱",
+            "description": "客观题干扰项识别不稳，建议增加错因分类与选项对比训练。",
+        },
+    }
+    answer_diagnostics = []
+    for key, count in diagnosis_counter.items():
+        if count <= 0:
+            continue
+        meta = diagnosis_meta[key]
+        answer_diagnostics.append(
+            {
+                "type": key,
+                "label": meta["label"],
+                "count": int(count),
+                "ratio": round(int(count) / max(total_wrong_answers, 1), 2),
+                "description": meta["description"],
+            }
+        )
+    answer_diagnostics.sort(key=lambda item: int(item["count"]), reverse=True)
+
     overview = {
         "class_name": classroom.name,
         "student_count": len(student_ids),
@@ -875,6 +1183,11 @@ def get_class_analysis(
         "score_distribution": score_distribution,
         "exam_trend": list(reversed(exam_trend)),
         "weak_knowledge_points": weak_knowledge_points,
+        "weak_question_signals": [
+            {k: v for k, v in item.items() if k != "stem_source"}
+            for item in weak_question_signals
+        ],
+        "answer_diagnostics": answer_diagnostics,
         "question_type_performance": question_type_performance,
         "focus_students": focus_students,
         "student_risks": student_risks,

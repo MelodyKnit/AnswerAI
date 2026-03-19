@@ -19,7 +19,7 @@ const riskFilterOptions = [
   { label: '全部风险', value: 'all' },
   { label: '仅看高危', value: 'high' },
   { label: '仅看预警', value: 'medium' },
-  { label: '仅看关注', value: 'low' },
+  { label: '仅看稳定', value: 'low' },
   { label: '仅看待评估', value: 'unknown' },
 ]
 
@@ -42,7 +42,7 @@ const normalizeRiskLevel = (risk: unknown): 'high' | 'medium' | 'low' | 'unknown
 const getRiskLabel = (risk: 'high' | 'medium' | 'low' | 'unknown') => {
   if (risk === 'high') return '学习高危'
   if (risk === 'medium') return '学习预警'
-  if (risk === 'low') return '持续关注'
+  if (risk === 'low') return '学习稳定'
   return '待评估'
 }
 

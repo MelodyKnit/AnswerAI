@@ -29,12 +29,24 @@ let refreshTimer: number | undefined
 const QUESTION_TYPE_LABELS: Record<string, string> = {
   single_choice: '单选题',
   multiple_choice: '多选题',
+  judge: '判断题',
   true_false: '判断题',
+  blank: '填空题',
   fill_blank: '填空题',
   short_answer: '简答题',
+  material: '材料题',
   programming: '编程题',
   essay: '论述题',
   case: '案例题',
+}
+
+const TOPIC_PALETTE = ['#3b82f6', '#06b6d4', '#10b981', '#a3e635', '#f59e0b', '#ef4444', '#8b5cf6']
+
+const resolveQuestionTypeLabel = (rawType: string) => {
+  const normalized = String(rawType || '').trim().toLowerCase().replace(/\s+/g, '_')
+  if (!normalized) return '未分类题型'
+  if (QUESTION_TYPE_LABELS[normalized]) return QUESTION_TYPE_LABELS[normalized]
+  return normalized.replace(/_/g, ' ')
 }
 
 const exams = computed(() => (trendData.value?.exams || []) as Array<any>)
@@ -169,11 +181,19 @@ const topicDistribution = computed(() => {
   }))
 })
 
+const topicLegendItems = computed(() => {
+  return topicDistribution.value.map((item, index) => ({
+    label: item.topic,
+    questionCount: item.questionCount,
+    color: TOPIC_PALETTE[index % TOPIC_PALETTE.length],
+  }))
+})
+
 const questionTypeDistribution = computed(() => {
   return ((growthAiData.value?.question_type_distribution || []) as Array<any>).map((item) => {
-    const raw = String(item.type || '未分类题型')
+    const raw = String(item.type || '')
     return {
-      type: QUESTION_TYPE_LABELS[raw] || raw,
+      type: resolveQuestionTypeLabel(raw),
       questionCount: Number(item.question_count || 0),
       accuracy: Math.round(Number(item.accuracy || 0) * 100),
     }
@@ -252,19 +272,17 @@ const abilityRadarOption = computed(() => {
 const topicPieOption = computed(() => {
   const items = topicDistribution.value
   if (!items.length) return null
-  const topicPalette = ['#3b82f6', '#06b6d4', '#10b981', '#a3e635', '#f59e0b', '#ef4444', '#8b5cf6']
   return {
     tooltip: { trigger: 'item', formatter: '{b}<br/>题量 {c} · 占比 {d}%' },
-    legend: { bottom: 0, icon: 'circle', textStyle: { color: '#5a6b80', fontSize: 12 } },
     series: [
       {
         type: 'pie',
-        radius: ['45%', '72%'],
-        center: ['50%', '42%'],
+        radius: ['44%', '70%'],
+        center: ['50%', '50%'],
         data: items.map((item, index) => ({
           name: item.topic,
           value: item.questionCount,
-          itemStyle: { color: topicPalette[index % topicPalette.length] },
+          itemStyle: { color: TOPIC_PALETTE[index % TOPIC_PALETTE.length] },
         })),
         label: { show: false },
       },
@@ -287,7 +305,7 @@ const questionTypeBarOption = computed(() => {
         return `${first?.name || '题型'}<br/>题量 ${Number(first?.value || 0)}`
       },
     },
-    grid: { left: 56, right: 16, top: 8, bottom: 24 },
+    grid: { left: 86, right: 16, top: 8, bottom: 24 },
     xAxis: {
       type: 'value',
       minInterval: 1,
@@ -300,7 +318,7 @@ const questionTypeBarOption = computed(() => {
       data: labels,
       axisTick: { show: false },
       axisLine: { lineStyle: { color: '#d7e1ef' } },
-      axisLabel: { color: '#46556b' },
+      axisLabel: { color: '#46556b', width: 72, overflow: 'truncate' },
     },
     series: [
       {
@@ -518,6 +536,13 @@ onUnmounted(() => {
           <TrendingUp :size="16" class="icon-accent" />
         </div>
         <VChart v-if="topicPieOption" :option="topicPieOption" autoresize class="chart" />
+        <div v-if="topicLegendItems.length" class="topic-legend">
+          <span v-for="item in topicLegendItems" :key="`topic-legend-${item.label}`" class="topic-legend-item">
+            <i class="topic-dot" :style="{ backgroundColor: item.color }"></i>
+            <span class="topic-name">{{ item.label }}</span>
+            <span class="topic-count">{{ item.questionCount }}题</span>
+          </span>
+        </div>
         <div v-else class="empty-state">暂无主题分布数据。</div>
       </article>
 
@@ -852,17 +877,57 @@ onUnmounted(() => {
 
 .chart-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
 }
 
 .chart-card {
-  min-height: 270px;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .chart {
   width: 100%;
-  height: 220px;
+  height: 240px;
+}
+
+.topic-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.topic-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dbe6f4;
+  background: #f8fbff;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: #425166;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.topic-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.topic-name {
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topic-count {
+  color: #64748b;
 }
 
 .ability-chip-row {

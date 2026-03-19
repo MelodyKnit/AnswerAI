@@ -180,6 +180,26 @@ export interface TeacherClassAnalysis {
   weak_knowledge_points: Array<{
     name: string
     count: number
+    source?: 'knowledge_point' | 'stem_keyword' | 'question_type' | string
+    source_label?: string
+  }>
+  weak_question_signals: Array<{
+    question_id: number
+    title: string
+    type: string
+    type_label: string
+    attempt_count: number
+    wrong_count: number
+    wrong_rate: number
+    avg_spent_seconds: number
+    sample_wrong_answer?: string
+  }>
+  answer_diagnostics: Array<{
+    type: string
+    label: string
+    count: number
+    ratio: number
+    description: string
   }>
   question_type_performance: Array<{
     type: string
@@ -204,6 +224,7 @@ export interface TeacherClassAnalysis {
   ai_insight: {
     summary: string
     actions: string[]
+    findings?: string[]
   }
 }
 

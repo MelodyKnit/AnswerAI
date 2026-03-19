@@ -21,6 +21,9 @@ const examTrend = computed(() => classAnalysis.value?.exam_trend || [])
 const focusStudents = computed(() => classAnalysis.value?.focus_students || [])
 const studentRisks = computed(() => classAnalysis.value?.student_risks || [])
 const aiActions = computed(() => classAnalysis.value?.ai_insight?.actions || [])
+const aiFindings = computed(() => classAnalysis.value?.ai_insight?.findings || [])
+const answerDiagnostics = computed(() => classAnalysis.value?.answer_diagnostics || [])
+const weakQuestionSignals = computed(() => classAnalysis.value?.weak_question_signals || [])
 const riskBarMax = computed(() => Math.max(1, ...riskDistribution.value.map((item) => Number(item.count || 0))))
 const scoreBarMax = computed(() => Math.max(1, ...scoreDistribution.value.map((item) => Number(item.count || 0))))
 const weakPointMax = computed(() => Math.max(1, ...weakKnowledgePoints.value.map((item) => Number(item.count || 0))))
@@ -29,6 +32,13 @@ const percentText = (value: number) => `${Math.round(Number(value || 0))}%`
 const formatScore = (value: number) => Number(value || 0).toFixed(1)
 const riskLabel = (value: string) => value === 'high' ? '高危' : value === 'medium' ? '预警' : '稳定'
 const riskTone = (value: string) => value === 'high' ? 'danger' : value === 'medium' ? 'warn' : 'safe'
+const weakPointSourceHint = (item: any) => {
+  const source = String(item?.source || '').toLowerCase()
+  if (source === 'knowledge_point') return '依据题目绑定的知识点统计错误样本。'
+  if (source === 'stem_keyword') return '题目未绑定知识点，按题干高频关键词归纳。'
+  if (source === 'question_type') return '知识点缺失时按高错题型能力归因。'
+  return '按班级错误样本综合归纳。'
+}
 
 const overview = computed(() => classAnalysis.value?.overview)
 const highRiskCount = computed(() => Number(riskDistribution.value.find((item) => item.level === 'high')?.count || 0))
@@ -245,9 +255,24 @@ const goStudentProfile = (studentId: number) => {
             </div>
           </div>
           <p class="summary">{{ classAnalysis.ai_insight.summary }}</p>
+          <ul v-if="aiFindings.length" class="finding-list dense-list">
+            <li v-for="(item, idx) in aiFindings" :key="`finding-${idx}`">{{ item }}</li>
+          </ul>
           <ul v-if="aiActions.length" class="action-list dense-list">
             <li v-for="(item, idx) in aiActions" :key="`action-${idx}`">{{ item }}</li>
           </ul>
+          <div v-if="answerDiagnostics.length" class="diagnostic-box">
+            <h4>答题行为诊断</h4>
+            <div class="diagnostic-list">
+              <div v-for="item in answerDiagnostics" :key="item.type" class="diagnostic-item">
+                <p>
+                  <strong>{{ item.label }}</strong>
+                  <span>{{ item.count }} 次 · 占比 {{ percentText(item.ratio * 100) }}</span>
+                </p>
+                <small>{{ item.description }}</small>
+              </div>
+            </div>
+          </div>
         </article>
 
         <article class="panel-card insight-side-card">
@@ -427,13 +452,18 @@ const goStudentProfile = (studentId: number) => {
               <h3>薄弱知识点</h3>
             </div>
           </div>
+          <p class="weak-point-tip">用于回答“班级现在主要薄弱在哪”，每条都标注了分析来源。</p>
           <div v-if="weakKnowledgePoints.length" class="bar-list">
             <div v-for="item in weakKnowledgePoints" :key="item.name" class="bar-row vertical">
-              <span class="bar-label truncate">{{ item.name }}</span>
+              <div class="weak-point-main">
+                <p class="bar-label truncate">{{ item.name }}</p>
+                <span class="weak-point-source">{{ item.source_label || '综合归纳' }}</span>
+              </div>
               <div class="bar-track">
                 <div class="bar-fill point-fill" :style="{ width: `${(Number(item.count || 0) / weakPointMax) * 100}%` }"></div>
               </div>
-              <strong>{{ item.count }}</strong>
+              <strong>{{ item.count }} 次</strong>
+              <small class="weak-point-hint">{{ weakPointSourceHint(item) }}</small>
             </div>
           </div>
           <div v-else class="empty-copy">暂无足够知识点数据</div>
@@ -456,6 +486,25 @@ const goStudentProfile = (studentId: number) => {
             </div>
           </div>
           <div v-else class="empty-copy">暂无题型表现数据</div>
+        </article>
+
+        <article class="panel-card">
+          <div class="section-head compact">
+            <div class="title-left">
+              <BrainCircuit :size="16" />
+              <h3>高错题画像</h3>
+            </div>
+          </div>
+          <div v-if="weakQuestionSignals.length" class="type-list">
+            <div v-for="item in weakQuestionSignals.slice(0, 5)" :key="item.question_id" class="type-item stacked">
+              <div>
+                <strong>{{ item.title }}</strong>
+                <p>{{ item.type_label }} · 错率 {{ percentText(item.wrong_rate * 100) }} · 平均 {{ item.avg_spent_seconds }} 秒</p>
+                <p v-if="item.sample_wrong_answer" class="sample-answer">典型错误作答：{{ item.sample_wrong_answer }}</p>
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-copy">暂无高错题画像数据</div>
         </article>
       </section>
 
@@ -886,6 +935,56 @@ const goStudentProfile = (studentId: number) => {
   color: #355247;
 }
 
+.finding-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #2f4a40;
+}
+
+.diagnostic-box {
+  border: 1px solid #dce8e1;
+  border-radius: 10px;
+  background: #f7fcf9;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostic-box h4 {
+  margin: 0;
+  font-size: 13px;
+  color: #2c4a3f;
+}
+
+.diagnostic-list {
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostic-item p {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.diagnostic-item p strong {
+  font-size: 13px;
+  color: #264437;
+}
+
+.diagnostic-item p span {
+  font-size: 12px;
+  color: #5d746a;
+}
+
+.diagnostic-item small {
+  color: #60786d;
+  line-height: 1.45;
+}
+
 .action-list,
 .bar-list,
 .type-list,
@@ -1122,12 +1221,45 @@ const goStudentProfile = (studentId: number) => {
 }
 
 .bar-row.vertical {
-  grid-template-columns: 110px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 1fr) auto;
+  row-gap: 4px;
+}
+
+.weak-point-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
 }
 
 .bar-label {
+  margin: 0;
   font-size: 13px;
   color: var(--ink-soft);
+}
+
+.weak-point-tip {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #678074;
+}
+
+.weak-point-source {
+  display: inline-flex;
+  width: fit-content;
+  font-size: 11px;
+  color: #4f6f61;
+  background: #edf7f2;
+  border: 1px solid #d8e9df;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.weak-point-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+  color: #758697;
+  line-height: 1.45;
 }
 
 .truncate {
@@ -1342,5 +1474,14 @@ const goStudentProfile = (studentId: number) => {
     width: 96px;
     height: 96px;
   }
+}
+
+.type-item.stacked {
+  align-items: flex-start;
+}
+
+.sample-answer {
+  margin-top: 4px;
+  color: #5c6f85;
 }
 </style>
