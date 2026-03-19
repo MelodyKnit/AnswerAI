@@ -498,7 +498,6 @@ const submitEditor = async () => {
     analysis: form.value.analysis.trim() || null,
     score: Number(form.value.score),
     difficulty: Number(form.value.difficulty),
-    knowledge_point_ids: [],
     ability_tags: [],
   }
 
@@ -690,7 +689,7 @@ const generateByAiAndApply = async () => {
       grade_name: null,
       question_type: form.value.type,
       requirement: aiRequirement.value.trim(),
-      knowledge_points: [],
+      focus_topics: [],
       difficulty: Number(form.value.difficulty),
       count: 1,
       with_analysis: true,
@@ -1038,8 +1037,7 @@ const generateByAiAndApply = async () => {
         </div>
         <div class="q-footer">
           <div class="q-knowledge">
-            <span v-if="Array.isArray(q.knowledge_points) && q.knowledge_points.length === 0" class="k-tag">暂无知识点</span>
-            <span v-for="point in q.knowledge_points || []" :key="point.id" class="k-tag"># {{ point.name }}</span>
+            <span class="k-tag"># {{ q.subject || '未分类知识点' }}</span>
           </div>
           <div class="q-actions">
             <button class="button button--small button--ghost" @click="openPreview(q)">

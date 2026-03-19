@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db, require_role
 from app.core.config import settings
 from app.core.response import success_response
-from app.models.academic import ClassRoom, ClassStudent, KnowledgePoint, Subject
+from app.models.academic import ClassRoom, ClassStudent, Subject
 from app.models.exam import Exam, ExamClass, ExamQuestion, ExamSubmission, SubmissionAnswer, SubmissionBehaviorEvent
-from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
+from app.models.question import Question, QuestionOption
 from app.models.user import AITask, ReviewItem, StudyPlan, StudyTask, User
 from app.schemas.student import BatchSaveAnswerRequest, BehaviorReportRequest, SaveAnswerRequest, StartExamRequest, StudentAIFollowUpRequest, StudentRetakeRequestCreate, StudyTaskActionRequest, SubmitExamRequest
 from app.services.learning import build_submission_analysis, generate_study_plan
@@ -22,7 +22,10 @@ from app.services.ai_client import request_chat_completion
 from app.services.prompt_loader import render_prompt
 from app.services.realtime import realtime_events, submission_channel
 from app.services.scoring import OBJECTIVE_TYPES, SUBJECTIVE_TYPES, compute_objective_score, parse_answer, serialize_answer
-from app.services.student_growth_ai import build_growth_ability_profile
+from app.services.student_growth_ai import (
+    build_growth_ability_profile,
+    build_score_trend_summary,
+)
 from app.services.tasks import complete_ai_task, mark_ai_task_running, queue_ai_task
 
 
@@ -763,18 +766,14 @@ def _calculate_dashboard_knowledge_mastery(
 
     query = (
         select(
-            QuestionKnowledgePoint.knowledge_point_id,
-            KnowledgePoint.name,
+            Subject.name,
             SubmissionAnswer.is_correct,
             SubmissionAnswer.updated_at,
         )
         .select_from(SubmissionAnswer)
         .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
-        .join(
-            QuestionKnowledgePoint,
-            QuestionKnowledgePoint.question_id == SubmissionAnswer.question_id,
-        )
-        .join(KnowledgePoint, KnowledgePoint.id == QuestionKnowledgePoint.knowledge_point_id)
+        .join(Question, Question.id == SubmissionAnswer.question_id)
+        .join(Subject, Subject.id == Question.subject_id)
         .where(
             ExamSubmission.student_id == student_id,
             ExamSubmission.status.in_(completed_statuses),
@@ -783,9 +782,7 @@ def _calculate_dashboard_knowledge_mastery(
     )
 
     if subject:
-        query = query.join(Question, Question.id == SubmissionAnswer.question_id).join(
-            Subject, Subject.id == Question.subject_id
-        ).where(Subject.name == subject)
+        query = query.where(Subject.name == subject)
 
     rows = db.execute(query).all()
     if not rows:
@@ -794,20 +791,20 @@ def _calculate_dashboard_knowledge_mastery(
             "knowledge_point_count": 0,
             "answer_count": 0,
             "formula": {
-                "overall": "总掌握度 = 各知识点掌握率平均值",
-                "per_point": "单知识点掌握率 = 加权正确题数 / 加权总题数",
+                "overall": "总掌握度 = 各知识点（subject）掌握率平均值",
+                "per_point": "单知识点（subject）掌握率 = 加权正确题数 / 加权总题数",
                 "weight": "14天内权重1.2，15~30天权重1.1，30天外权重1.0",
             },
             "breakdown": [],
         }
 
-    stats: dict[int, dict[str, Any]] = {}
-    for knowledge_point_id, name, is_correct, updated_at in rows:
-        kp_id = int(knowledge_point_id)
-        if kp_id not in stats:
-            stats[kp_id] = {
-                "knowledge_point_id": kp_id,
-                "name": str(name or "未命名知识点"),
+    stats: dict[str, dict[str, Any]] = {}
+    for subject_name, is_correct, updated_at in rows:
+        point_key = str(subject_name or "").strip()
+        display_name = point_key or "未分类知识点"
+        if point_key not in stats:
+            stats[point_key] = {
+                "name": display_name,
                 "weighted_total": 0.0,
                 "weighted_correct": 0.0,
                 "total": 0,
@@ -823,11 +820,11 @@ def _calculate_dashboard_knowledge_mastery(
         else:
             weight = 1.0
 
-        stats[kp_id]["weighted_total"] += weight
-        stats[kp_id]["total"] += 1
+        stats[point_key]["weighted_total"] += weight
+        stats[point_key]["total"] += 1
         if is_correct is True:
-            stats[kp_id]["weighted_correct"] += weight
-            stats[kp_id]["correct"] += 1
+            stats[point_key]["weighted_correct"] += weight
+            stats[point_key]["correct"] += 1
 
     breakdown: list[dict[str, Any]] = []
     for item in stats.values():
@@ -835,7 +832,6 @@ def _calculate_dashboard_knowledge_mastery(
         mastery = (float(item["weighted_correct"]) / weighted_total) if weighted_total > 0 else 0.0
         breakdown.append(
             {
-                "knowledge_point_id": item["knowledge_point_id"],
                 "name": item["name"],
                 "mastery_percent": round(mastery * 100),
                 "correct": int(item["correct"]),
@@ -853,8 +849,8 @@ def _calculate_dashboard_knowledge_mastery(
         "knowledge_point_count": len(breakdown),
         "answer_count": len(rows),
         "formula": {
-            "overall": "总掌握度 = 各知识点掌握率平均值",
-            "per_point": "单知识点掌握率 = 加权正确题数 / 加权总题数",
+            "overall": "总掌握度 = 各知识点（subject）掌握率平均值",
+            "per_point": "单知识点（subject）掌握率 = 加权正确题数 / 加权总题数",
             "weight": "14天内权重1.2，15~30天权重1.1，30天外权重1.0",
         },
         "breakdown": breakdown[:8],
@@ -920,12 +916,11 @@ def get_question_analysis(
         .order_by(QuestionOption.sort_order.asc())
     ).all()
 
-    related_knowledge_points = db.scalars(
-        select(KnowledgePoint.name)
-        .join(QuestionKnowledgePoint, QuestionKnowledgePoint.knowledge_point_id == KnowledgePoint.id)
-        .where(QuestionKnowledgePoint.question_id == question_id)
-    ).all()
-    knowledge_point_names = [str(item) for item in related_knowledge_points if str(item).strip()]
+    subject_name = ""
+    if question.subject_id:
+        subject_obj = db.get(Subject, question.subject_id)
+        subject_name = str(subject_obj.name or "").strip() if subject_obj else ""
+    knowledge_point_names = [subject_name or "未分类知识点"]
 
     standard_answer = parse_answer(question.answer_text)
     student_answer = parse_answer(answer.answer_content) if answer and answer.answer_content else (answer.answer_text if answer else None)
@@ -990,7 +985,6 @@ def get_question_analysis(
                 "question_type": question.type,
                 "stem": question.stem,
                 "analysis": question.analysis,
-                "knowledge_points": knowledge_point_names,
                 "options": [{"key": item.option_key, "content": item.content} for item in options],
             },
             "answer": {
@@ -1287,18 +1281,7 @@ def get_student_knowledge_map(subject: str | None = None, current_user: User = D
     ).all()
 
     question_ids = list({int(row.question_id) for row in answer_rows if row.question_id is not None})
-    kp_rows = []
-    if question_ids:
-        kp_rows = db.execute(
-            select(QuestionKnowledgePoint.question_id, KnowledgePoint.name)
-            .join(KnowledgePoint, KnowledgePoint.id == QuestionKnowledgePoint.knowledge_point_id)
-            .where(QuestionKnowledgePoint.question_id.in_(question_ids))
-        ).all()
-
     kp_map: dict[int, list[str]] = {}
-    for question_id, kp_name in kp_rows:
-        qid = int(question_id)
-        kp_map.setdefault(qid, []).append(str(kp_name))
 
     def classify_categories(stem_text: str, analysis_text: str, kp_names: list[str]) -> list[str]:
         corpus = f"{stem_text} {analysis_text} {' '.join(kp_names)}".lower()
@@ -1468,7 +1451,18 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
 
     focus_types = [item[0] for item in sorted(type_counter.items(), key=lambda item: item[1], reverse=True)[:3]]
     active_count = pending_count + in_progress_count
-    readiness_score = max(45, min(95, 100 - active_count * 6 + completed_count * 4))
+    ignored_count = len(ignored_serialized)
+    completed_count = len(completed_serialized)
+
+    # 0-100 动态评分：默认中性起点 60，按任务推进情况加减分。
+    raw_score = (
+        60
+        + completed_count * 3
+        - pending_count * 8
+        - in_progress_count * 5
+        - ignored_count * 2
+    )
+    readiness_score = max(0, min(100, int(round(raw_score))))
     suggested_session_minutes = 25 if active_count >= 4 else 20 if active_count >= 2 else 15
     estimated_completion_days = max(1, (total_minutes + 39) // 40) if active_count else 0
 
@@ -1481,29 +1475,44 @@ def list_study_tasks(current_user: User = Depends(require_role("student")), db: 
         "estimated_completion_days": estimated_completion_days,
         "focus_types": focus_types,
         "score_formula": {
-            "base": 100,
-            "active_penalty_per_task": 6,
-            "completed_bonus_per_task": 4,
-            "min_score": 45,
-            "max_score": 95,
-            "expression": "评分 = clamp(45, 95, 100 - 待推进任务数×6 + 已完成任务数×4)",
+            "base": 60,
+            "pending_penalty_per_task": 8,
+            "in_progress_penalty_per_task": 5,
+            "ignored_penalty_per_task": 2,
+            "completed_bonus_per_task": 3,
+            "raw_score": int(round(raw_score)),
+            "min_score": 0,
+            "max_score": 100,
+            "expression": "评分 = clamp(0, 100, 60 + 已完成任务数×3 - 待开始任务数×8 - 进行中任务数×5 - 已忽略任务数×2)",
         },
         "summary": (
-            "当前任务节奏良好，建议保持每日固定复习窗口。"
-            if active_count <= 2
-            else "当前任务较密集，建议优先处理高优先级并按番茄时段推进。"
+            "当前学习状态优秀，建议保持每日固定复习窗口。"
+            if readiness_score >= 85
+            else (
+                "当前学习状态良好，建议按优先级稳定推进。"
+                if readiness_score >= 70
+                else (
+                    "当前学习状态一般，建议先完成高优先级任务。"
+                    if readiness_score >= 50
+                    else "当前学习状态偏低，建议先减少待办并完成1个高优先级任务。"
+                )
+            )
         ),
     }
 
-    ai_actions = [
-        f"今天先完成优先级最高的 {min(2, active_count)} 个任务。",
-        f"每轮学习建议 {suggested_session_minutes} 分钟，轮间休息 5 分钟。",
-    ]
+    ai_actions = []
+    if active_count > 0:
+        ai_actions.append(f"今天先完成优先级最高的 {min(2, active_count)} 个任务。")
+        ai_actions.append(f"每轮学习建议 {suggested_session_minutes} 分钟，轮间休息 5 分钟。")
+    else:
+        ai_actions.append("当前没有待推进任务，建议开启一套新的测后复习计划。")
+        ai_actions.append("可先进入最近考试结果页，选择错题发起针对性复习。")
+
     if focus_types:
         ai_actions.append(f"优先关注：{'、'.join(focus_types)}。")
 
-    ai_overview["ignored_count"] = len(ignored_serialized)
-    ai_overview["completed_count"] = len(completed_serialized)
+    ai_overview["ignored_count"] = ignored_count
+    ai_overview["completed_count"] = completed_count
     return success_response(
         {
             "tasks": serialized,
@@ -1599,12 +1608,6 @@ def get_study_task_coaching(
     )
     if task.task_type == "wrong_question_review" and source_exam_id > 0:
         wrong_query = wrong_query.where(ExamSubmission.exam_id == source_exam_id)
-    if task.knowledge_point_id:
-        wrong_query = wrong_query.join(
-            QuestionKnowledgePoint,
-            (QuestionKnowledgePoint.question_id == Question.id)
-            & (QuestionKnowledgePoint.knowledge_point_id == task.knowledge_point_id),
-        )
 
     rows = db.execute(wrong_query).all()
 
@@ -1737,12 +1740,12 @@ def _cleanup_invalid_study_artifacts_for_student(db: Session, student_id: int) -
         .where(StudyTask.student_id == student_id)
         .order_by(StudyTask.plan_id.asc(), StudyTask.created_at.desc(), StudyTask.id.desc())
     ).all()
-    seen_task_keys: set[tuple[int, str, int]] = set()
+    seen_task_keys: set[tuple[int, str]] = set()
     duplicate_task_ids: list[int] = []
     wrong_review_counts: dict[int, int] = {}
     wrong_review_keepers: dict[int, StudyTask] = {}
     for task in student_tasks:
-        key = (task.plan_id, task.task_type or "", int(task.knowledge_point_id or 0))
+        key = (task.plan_id, task.task_type or "")
         if key in seen_task_keys:
             duplicate_task_ids.append(task.id)
             if task.task_type == "wrong_question_review":
@@ -1792,7 +1795,7 @@ def get_growth_trend(subject: str | None = None, current_user: User = Depends(re
     # 获取学生有成绩的考试
     submissions = db.scalars(
         select(ExamSubmission)
-        .where(ExamSubmission.student_id == current_user.id, ExamSubmission.status.in_(["submitted", "completed"]))
+        .where(ExamSubmission.student_id == current_user.id, ExamSubmission.status.in_(["submitted", "completed", "reviewed"]))
         .order_by(ExamSubmission.submitted_at.asc())
         .limit(10)
     ).all()
@@ -1803,25 +1806,38 @@ def get_growth_trend(subject: str | None = None, current_user: User = Depends(re
         if not exam:
             continue
         # 获取改考试的班级所有提交，计算平均分
-        all_subs = db.scalars(select(ExamSubmission).where(ExamSubmission.exam_id == exam.id, ExamSubmission.status.in_(["submitted", "completed"]))).all()
+        all_subs = db.scalars(select(ExamSubmission).where(ExamSubmission.exam_id == exam.id, ExamSubmission.status.in_(["submitted", "completed", "reviewed"]))).all()
         class_avg = sum(float(s.total_score) for s in all_subs) / len(all_subs) if all_subs else 0
         
         exams_data.append({
+            "exam_id": int(exam.id),
+            "title": str(exam.title or f"考试#{exam.id}"),
             "date": sub.submitted_at.strftime("%Y-%m-%d") if sub.submitted_at else "未知日期",
+            "submitted_at": sub.submitted_at.isoformat() if sub.submitted_at else sub.created_at.isoformat(),
             "score": float(sub.total_score),
             "class_avg": round(class_avg, 1)
         })
-    
+
+    trend_summary = build_score_trend_summary([float(item.get("score") or 0.0) for item in exams_data], window_size=3)
+
     insights = []
-    if len(exams_data) >= 2:
-        diff = exams_data[-1]["score"] - exams_data[-2]["score"]
-        if diff > 0:
-            insights.append(f"最近一次考试成绩提升了{diff}分，继续保持！")
-        elif diff < 0:
-            insights.append(f"最近一次考试分数有所波退，请注意错题回顾。")
+    if trend_summary["sample_count"] >= 2:
+        momentum = float(trend_summary["momentum"] or 0.0)
+        if momentum >= 1:
+            insights.append(
+                f"趋势变化来自最近{trend_summary['window_size']}次均分与最早{trend_summary['window_size']}次均分对比，当前提升 {momentum} 分。"
+            )
+        elif momentum <= -1:
+            insights.append(
+                f"趋势变化来自最近{trend_summary['window_size']}次均分与最早{trend_summary['window_size']}次均分对比，当前下降 {abs(momentum)} 分，建议重点复盘错题。"
+            )
+        else:
+            insights.append("近期成绩处于平台期，可通过提升任务完成质量来打破平稳区间。")
             
     return success_response({
         "exams": exams_data,
+        "trend_summary": trend_summary,
+        "momentum": trend_summary["momentum"],
         "insights": insights
     })
 

@@ -56,7 +56,7 @@ def _build_prompts(payload: AIQuestionGenerateRequest) -> tuple[str, str]:
     """
     渲染出题 system/user 提示词模板。
     """
-    kp_text = "、".join(payload.knowledge_points) if payload.knowledge_points else "综合能力"
+    kp_text = "、".join(payload.focus_topics) if payload.focus_topics else "综合能力"
     difficulty = payload.difficulty if payload.difficulty is not None else 0.5
     system_prompt = render_prompt("question_generate_system.jinja")
     user_prompt = render_prompt(
@@ -116,7 +116,6 @@ def _normalize_question(item: dict[str, Any], payload: AIQuestionGenerateRequest
         "analysis": analysis,
         "score": 5,
         "difficulty": payload.difficulty if payload.difficulty is not None else 0.5,
-        "knowledge_point_ids": [],
         "ability_tags": [],
     }
 
@@ -191,7 +190,7 @@ def _fallback_question(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
     """
     处理  fallback question 请求并返回结果。
     """
-    kp = payload.knowledge_points[0] if payload.knowledge_points else "综合能力"
+    kp = payload.focus_topics[0] if payload.focus_topics else "综合能力"
     q_type = payload.question_type
 
     if q_type in {"single_choice", "multiple_choice"}:
@@ -211,7 +210,6 @@ def _fallback_question(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
             "analysis": "占位结果：请根据教学目标进行微调。",
             "score": 5,
             "difficulty": payload.difficulty if payload.difficulty is not None else 0.5,
-            "knowledge_point_ids": [],
             "ability_tags": [],
         }
 
@@ -225,7 +223,6 @@ def _fallback_question(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
             "analysis": "占位结果：该结论并非总成立。",
             "score": 5,
             "difficulty": payload.difficulty if payload.difficulty is not None else 0.5,
-            "knowledge_point_ids": [],
             "ability_tags": [],
         }
 
@@ -239,7 +236,6 @@ def _fallback_question(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
             "analysis": "占位结果：可替换为课程重点词汇。",
             "score": 5,
             "difficulty": payload.difficulty if payload.difficulty is not None else 0.5,
-            "knowledge_point_ids": [],
             "ability_tags": [],
         }
 
@@ -252,6 +248,5 @@ def _fallback_question(payload: AIQuestionGenerateRequest) -> dict[str, Any]:
         "analysis": "占位结果：请根据教学内容完善。",
         "score": 5,
         "difficulty": payload.difficulty if payload.difficulty is not None else 0.5,
-        "knowledge_point_ids": [],
         "ability_tags": [],
     }

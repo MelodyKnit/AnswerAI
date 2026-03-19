@@ -49,13 +49,20 @@ const overview = computed(() => portrait.value?.overview)
 const aiInsight = computed(() => portrait.value?.ai_insight)
 const trend = computed(() => portrait.value?.trend || [])
 const abilityProfile = computed(() => portrait.value?.ability_profile || [])
-const knowledgePoints = computed(() => portrait.value?.knowledge_points || [])
+const subjectBreakdown = computed(() => portrait.value?.subject_breakdown || [])
 const questionTypes = computed(() => portrait.value?.question_type_distribution || [])
 const studyTasks = computed(() => portrait.value?.study_tasks || [])
+const trendSummary = computed(() => portrait.value?.trend_summary)
 
 const riskText = computed(() => riskLabelMap[String(overview.value?.risk_level || 'low')] || '状态稳定')
 const accuracyPercent = computed(() => Math.round(Number(overview.value?.avg_correct_rate || 0) * 100))
 const positiveMomentum = computed(() => Number(overview.value?.momentum || 0) >= 0)
+const trendMomentumExplain = computed(() => {
+  const summary = trendSummary.value
+  const n = Number(summary?.window_size || 0)
+  if (n <= 0) return '样本不足，暂无法形成趋势结论'
+  return `口径：最近${n}次均分 - 最早${n}次均分`
+})
 
 const summaryCards = computed(() => {
   const current = overview.value
@@ -84,7 +91,7 @@ const summaryCards = computed(() => {
     {
       label: '趋势动量',
       value: `${positiveMomentum.value ? '+' : ''}${Number(overview.value?.momentum || 0).toFixed(1)} 分`,
-      sub: positiveMomentum.value ? '最近表现呈上升趋势' : '近期波动需要重点跟进',
+      sub: trendMomentumExplain.value,
       tone: 'slate',
       icon: Sparkles,
     },
@@ -186,7 +193,7 @@ const knowledgeBarOption = computed(() => ({
   },
   yAxis: {
     type: 'category',
-    data: knowledgePoints.value.slice(0, 6).map((item) => item.name),
+    data: subjectBreakdown.value.slice(0, 6).map((item) => item.name),
     axisTick: { show: false },
     axisLabel: { color: '#46556b' },
   },
@@ -194,7 +201,7 @@ const knowledgeBarOption = computed(() => ({
     {
       type: 'bar',
       barWidth: 16,
-      data: knowledgePoints.value.slice(0, 6).map((item) => ({
+      data: subjectBreakdown.value.slice(0, 6).map((item) => ({
         value: Math.round(Number(item.mastery || 0) * 100),
         itemStyle: { color: Number(item.mastery || 0) < 0.6 ? '#f97316' : '#3b82f6', borderRadius: [0, 8, 8, 0] },
       })),
@@ -323,10 +330,10 @@ onMounted(() => {
           <div class="panel-head">
             <div>
               <h2>知识点掌握</h2>
-              <p>优先查看薄弱知识点的掌握度与错题压力。</p>
+              <p>基于知识点维度查看掌握度与错题压力。</p>
             </div>
           </div>
-          <VChart v-if="knowledgePoints.length" class="chart" :option="knowledgeBarOption" autoresize />
+          <VChart v-if="subjectBreakdown.length" class="chart" :option="knowledgeBarOption" autoresize />
           <div v-else class="empty-tip">当前没有知识点统计。</div>
         </article>
 

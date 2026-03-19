@@ -4,27 +4,39 @@ import { ArrowUpRight, Brain, ShieldAlert, Sparkles, Target, TrendingUp } from '
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { BarChart, PieChart, RadarChart } from 'echarts/charts'
+import { BarChart, LineChart, PieChart, RadarChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, RadarComponent, TooltipComponent } from 'echarts/components'
 import http from '@/lib/http'
+import { useAuthStore } from '@/stores/auth'
 
-use([CanvasRenderer, PieChart, RadarChart, BarChart, TooltipComponent, LegendComponent, RadarComponent, GridComponent])
+use([CanvasRenderer, PieChart, RadarChart, BarChart, LineChart, TooltipComponent, LegendComponent, RadarComponent, GridComponent])
 
 const loading = ref(true)
 const loadError = ref('')
+const authStore = useAuthStore()
 
 const trendData = ref<any>({ exams: [], insights: [] })
 const knowledgeData = ref<any>({ nodes: [] })
 const taskData = ref<any>({ tasks: [], ai_overview: null, ai_actions: [] })
 const dashboardData = ref<any>(null)
 const growthAiData = ref<any>({ ability_profile: [], ai_summary: '', ai_actions: [], recommended_books: [] })
-const GROWTH_CACHE_KEY = 'student-growth-profile-cache-v1'
+const CACHE_NAMESPACE = 'student-growth-profile-cache-v2'
 const GROWTH_CACHE_TTL_MS = 10 * 60 * 1000
-const PROFILE_REFRESH_COOLDOWN_KEY = 'student-growth-profile-refresh-at-v1'
+const PROFILE_REFRESH_NAMESPACE = 'student-growth-profile-refresh-at-v2'
 const PROFILE_REFRESH_COOLDOWN_MS = 60 * 1000
 const refreshLoading = ref(false)
 const refreshCooldownLeft = ref(0)
 let refreshTimer: number | undefined
+
+const userScopeKey = computed(() => {
+  const uid = Number(authStore.user?.id || 0)
+  if (uid > 0) return `uid:${uid}`
+  const tokenTail = String(authStore.token || '').slice(-16)
+  return tokenTail ? `token:${tokenTail}` : 'anonymous'
+})
+
+const growthCacheKey = computed(() => `${CACHE_NAMESPACE}:${userScopeKey.value}`)
+const profileRefreshCooldownKey = computed(() => `${PROFILE_REFRESH_NAMESPACE}:${userScopeKey.value}`)
 
 const QUESTION_TYPE_LABELS: Record<string, string> = {
   single_choice: '单选题',
@@ -50,6 +62,33 @@ const resolveQuestionTypeLabel = (rawType: string) => {
 }
 
 const exams = computed(() => (trendData.value?.exams || []) as Array<any>)
+const timelineLabelStep = computed(() => {
+  const total = exams.value.length
+  if (total <= 6) return 1
+  if (total <= 10) return 2
+  if (total <= 16) return 3
+  return 4
+})
+
+const formatTimelineDateLabel = (raw: string) => {
+  const text = String(raw || '')
+  if (!text) return ''
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    return text.slice(5)
+  }
+  return text
+}
+const trendSummary = computed(() => {
+  const raw = trendData.value?.trend_summary || {}
+  return {
+    windowSize: Number(raw.window_size || 0),
+    sampleCount: Number(raw.sample_count || 0),
+    startAvg: Number(raw.start_avg || 0),
+    recentAvg: Number(raw.recent_avg || 0),
+    momentum: Number(raw.momentum || 0),
+    direction: String(raw.direction || 'flat'),
+  }
+})
 const weakNodes = computed(() => {
   const nodes = (knowledgeData.value?.nodes || []) as Array<any>
   return [...nodes].sort((a, b) => Number(a.mastery || 0) - Number(b.mastery || 0)).slice(0, 5)
@@ -62,10 +101,83 @@ const averageScore = computed(() => {
 })
 
 const scoreMomentum = computed(() => {
+  if (trendSummary.value.sampleCount >= 2) {
+    return Math.round(trendSummary.value.momentum * 10) / 10
+  }
   if (exams.value.length < 2) return 0
   const first = Number(exams.value[0]?.score || 0)
   const last = Number(exams.value[exams.value.length - 1]?.score || 0)
   return Math.round((last - first) * 10) / 10
+})
+
+const trendSummaryText = computed(() => {
+  if (trendSummary.value.sampleCount < 2) return '样本不足，完成更多测验后可计算趋势变化。'
+  const n = Math.max(1, trendSummary.value.windowSize)
+  return `趋势变化 = 最近${n}次均分(${trendSummary.value.recentAvg}) - 最早${n}次均分(${trendSummary.value.startAvg})`
+})
+
+type MetricExplainKey = 'average' | 'trend' | 'mastery'
+
+const activeMetricKey = ref<MetricExplainKey | null>(null)
+
+const openMetricExplain = (key: MetricExplainKey) => {
+  activeMetricKey.value = key
+}
+
+const closeMetricExplain = () => {
+  activeMetricKey.value = null
+}
+
+const metricExplainMap = computed(() => {
+  const examCount = exams.value.length
+  const scoreList = exams.value.map((item) => Number(item.score || 0))
+  const scoreExpr = scoreList.map((item) => item.toFixed(1)).join(' + ')
+  const nodes = (knowledgeData.value?.nodes || []) as Array<any>
+  const masteryList = nodes.map((item) => Number(item.mastery || 0))
+  const masteryExpr = masteryList.map((item) => Number(item * 100).toFixed(0)).join(' + ')
+  const trendWindow = Math.max(1, Number(trendSummary.value.windowSize || 1))
+  const startWindowScores = scoreList.slice(0, trendWindow)
+  const recentWindowScores = scoreList.slice(-trendWindow)
+  const startExpr = startWindowScores.map((item) => item.toFixed(1)).join(' + ')
+  const recentExpr = recentWindowScores.map((item) => item.toFixed(1)).join(' + ')
+
+  return {
+    average: {
+      title: '平均分',
+      meaning: '反映最近测验的整体水平，用于判断当前阶段的稳定表现。',
+      formula: '平均分 = 所有测验分数之和 ÷ 测验次数',
+      calculation:
+        examCount > 0
+          ? `(${scoreExpr}) ÷ ${examCount} = ${averageScore.value.toFixed(1)}`
+          : '暂无测验数据，无法计算平均分。',
+      range: '区间：0-100，分值越高代表整体表现越稳。',
+    },
+    trend: {
+      title: '趋势变化',
+      meaning: '反映阶段性进步或回落，避免单次考试波动造成误判。',
+      formula: '趋势变化 = 最近N次均分 - 最早N次均分（默认 N=3，样本不足自动降级）',
+      calculation:
+        trendSummary.value.sampleCount >= 2
+          ? `[( ${recentExpr} ) ÷ ${trendWindow}] - [( ${startExpr} ) ÷ ${trendWindow}] = ${scoreMomentum.value.toFixed(1)}`
+          : '样本不足，需至少 2 次测验后才可计算趋势变化。',
+      range: '结果解读：>0 为上升，<0 为下降，接近 0 说明处于平台期。',
+    },
+    mastery: {
+      title: '掌握度',
+      meaning: '反映知识点层面的平均掌握水平，用于识别薄弱点密度。',
+      formula: '掌握度(%) = 知识点掌握度平均值 × 100',
+      calculation:
+        masteryList.length > 0
+          ? `(${masteryExpr}) ÷ ${masteryList.length} = ${masteryAverage.value}%`
+          : '暂无知识点数据，无法计算掌握度。',
+      range: '区间：0-100%，建议结合“薄弱知识点”列表一起看。',
+    },
+  }
+})
+
+const activeMetricExplain = computed(() => {
+  if (!activeMetricKey.value) return null
+  return metricExplainMap.value[activeMetricKey.value]
 })
 
 const masteryAverage = computed(() => {
@@ -336,12 +448,80 @@ const questionTypeBarOption = computed(() => {
   }
 })
 
+const scoreTrendLineOption = computed(() => {
+  if (!exams.value.length) return null
+  const labels = exams.value.map((item) => String(item.date || ''))
+  const step = Math.max(1, timelineLabelStep.value)
+  return {
+    tooltip: { trigger: 'axis' },
+    legend: { bottom: 0, textStyle: { color: '#5a6b80', fontSize: 12 } },
+    grid: { left: 18, right: 18, top: 12, bottom: 40, containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: labels,
+      axisTick: { show: false },
+      axisLine: { lineStyle: { color: '#d7e1ef' } },
+      axisLabel: {
+        color: '#516175',
+        rotate: 0,
+        formatter: (value: string, index: number) => {
+          if (labels.length <= 1) return formatTimelineDateLabel(value)
+          const isBoundary = index === 0 || index === labels.length - 1
+          if (!isBoundary && index % step !== 0) return ''
+          return formatTimelineDateLabel(value)
+        },
+      },
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: 100,
+      axisLine: { lineStyle: { color: '#d7e1ef' } },
+      splitLine: { lineStyle: { color: '#ecf2fb' } },
+      axisLabel: { color: '#5a6b80' },
+    },
+    series: [
+      {
+        name: '我的成绩',
+        type: 'line',
+        smooth: true,
+        symbolSize: 7,
+        lineStyle: { color: '#0f766e', width: 2.5 },
+        itemStyle: { color: '#0f766e' },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(15, 118, 110, 0.22)' },
+              { offset: 1, color: 'rgba(15, 118, 110, 0.03)' },
+            ],
+          },
+        },
+        data: exams.value.map((item) => Number(item.score || 0)),
+      },
+      {
+        name: '班级均分',
+        type: 'line',
+        smooth: true,
+        symbolSize: 6,
+        lineStyle: { color: '#1d4ed8', width: 2, type: 'dashed' },
+        itemStyle: { color: '#1d4ed8' },
+        data: exams.value.map((item) => Number(item.class_avg || 0)),
+      },
+    ],
+  }
+})
+
 const canRefreshProfile = computed(() => refreshCooldownLeft.value <= 0 && !refreshLoading.value)
 
 const updateCooldown = () => {
   let lastRefreshAt = 0
   try {
-    lastRefreshAt = Number(localStorage.getItem(PROFILE_REFRESH_COOLDOWN_KEY) || 0)
+    lastRefreshAt = Number(localStorage.getItem(profileRefreshCooldownKey.value) || 0)
   } catch {
     lastRefreshAt = 0
   }
@@ -353,11 +533,14 @@ const loadGrowthData = async (forceProfileRefresh = false) => {
   let cachedGrowthProfile: any = null
   if (!forceProfileRefresh) {
     try {
-      const raw = localStorage.getItem(GROWTH_CACHE_KEY)
+      const raw = localStorage.getItem(growthCacheKey.value)
       if (raw) {
         const parsed = JSON.parse(raw)
+        if (String(parsed?.scope || '') !== userScopeKey.value) {
+          cachedGrowthProfile = null
+        }
         const cachedAt = Number(parsed?.cachedAt || 0)
-        if (Date.now() - cachedAt < GROWTH_CACHE_TTL_MS && parsed?.payload) {
+        if (String(parsed?.scope || '') === userScopeKey.value && Date.now() - cachedAt < GROWTH_CACHE_TTL_MS && parsed?.payload) {
           cachedGrowthProfile = parsed.payload
         }
       }
@@ -394,8 +577,9 @@ const loadGrowthData = async (forceProfileRefresh = false) => {
   try {
     if (growthProfileRes) {
       localStorage.setItem(
-        GROWTH_CACHE_KEY,
+        growthCacheKey.value,
         JSON.stringify({
+          scope: userScopeKey.value,
           cachedAt: Date.now(),
           payload: growthProfileRes,
         }),
@@ -411,7 +595,7 @@ const refreshGrowthProfile = async () => {
   try {
     refreshLoading.value = true
     await loadGrowthData(true)
-    localStorage.setItem(PROFILE_REFRESH_COOLDOWN_KEY, String(Date.now()))
+    localStorage.setItem(profileRefreshCooldownKey.value, String(Date.now()))
     updateCooldown()
   } catch (error: any) {
     console.error('手动更新成长档案失败', error)
@@ -475,17 +659,26 @@ onUnmounted(() => {
       <p class="hero-summary">{{ aiCoachSummary }}</p>
       <div class="hero-stats">
         <div class="hero-stat">
-          <span>平均分</span>
+          <div class="hero-stat-head">
+            <span>平均分</span>
+            <button class="metric-help-btn" @click="openMetricExplain('average')">计算说明</button>
+          </div>
           <strong>{{ averageScore }} 分</strong>
         </div>
         <div class="hero-stat">
-          <span>趋势变化</span>
+          <div class="hero-stat-head">
+            <span>趋势变化</span>
+            <button class="metric-help-btn" @click="openMetricExplain('trend')">计算说明</button>
+          </div>
           <strong :class="{ up: scoreMomentum > 0, down: scoreMomentum < 0 }">
             {{ scoreMomentum > 0 ? '+' : '' }}{{ scoreMomentum }} 分
           </strong>
         </div>
         <div class="hero-stat">
-          <span>掌握度</span>
+          <div class="hero-stat-head">
+            <span>掌握度</span>
+            <button class="metric-help-btn" @click="openMetricExplain('mastery')">计算说明</button>
+          </div>
           <strong>{{ masteryAverage }}%</strong>
         </div>
       </div>
@@ -614,6 +807,8 @@ onUnmounted(() => {
         <h2>成绩时间线</h2>
         <TrendingUp :size="16" class="icon-accent" />
       </div>
+      <p class="trend-summary-text">{{ trendSummaryText }}</p>
+      <VChart v-if="scoreTrendLineOption" :option="scoreTrendLineOption" autoresize class="chart chart-score-line" />
       <div v-if="exams.length" class="history-list">
         <div v-for="(exam, idx) in exams" :key="idx" class="history-item">
           <p class="history-date">{{ exam.date }}</p>
@@ -654,6 +849,21 @@ onUnmounted(() => {
           <p><strong>优势表现：</strong>{{ getAbilityInsight(selectedAbility).strengths }}</p>
           <p><strong>当前短板：</strong>{{ getAbilityInsight(selectedAbility).risks }}</p>
           <p><strong>AI 建议：</strong>{{ getAbilityInsight(selectedAbility).advice }}</p>
+        </div>
+      </article>
+    </div>
+
+    <div v-if="activeMetricExplain" class="ability-modal-mask" @click.self="closeMetricExplain">
+      <article class="ability-modal metric-modal">
+        <div class="ability-modal-head">
+          <h3>{{ activeMetricExplain.title }} · 计算说明</h3>
+          <button class="ability-modal-close" @click="closeMetricExplain">关闭</button>
+        </div>
+        <div class="ability-modal-body metric-modal-body">
+          <p><strong>指标意义：</strong>{{ activeMetricExplain.meaning }}</p>
+          <p><strong>计算公式：</strong>{{ activeMetricExplain.formula }}</p>
+          <p><strong>代入结果：</strong>{{ activeMetricExplain.calculation }}</p>
+          <p><strong>解释口径：</strong>{{ activeMetricExplain.range }}</p>
         </div>
       </article>
     </div>
@@ -784,6 +994,13 @@ onUnmounted(() => {
   gap: 6px;
 }
 
+.hero-stat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
 .hero-stat span {
   font-size: 12px;
   color: #64748b;
@@ -802,6 +1019,16 @@ onUnmounted(() => {
   color: #dc2626;
 }
 
+.metric-help-btn {
+  border: 1px solid #d4e0ef;
+  background: #f8fbff;
+  color: #1d4ed8;
+  font-size: 11px;
+  line-height: 1;
+  border-radius: 999px;
+  padding: 4px 8px;
+}
+
 .section-title-row {
   display: flex;
   align-items: center;
@@ -818,6 +1045,13 @@ onUnmounted(() => {
 .section-sub {
   font-size: 12px;
   color: #64748b;
+}
+
+.trend-summary-text {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #5b697d;
+  line-height: 1.5;
 }
 
 .icon-accent {
@@ -893,6 +1127,11 @@ onUnmounted(() => {
   height: 240px;
 }
 
+.chart-score-line {
+  height: 220px;
+  margin-bottom: 10px;
+}
+
 .topic-legend {
   display: flex;
   flex-wrap: wrap;
@@ -966,6 +1205,14 @@ onUnmounted(() => {
   border: 1px solid #dbe6f4;
   box-shadow: 0 14px 28px rgba(15, 23, 42, 0.18);
   overflow: hidden;
+}
+
+.metric-modal {
+  border-color: #d2deee;
+}
+
+.metric-modal-body p {
+  line-height: 1.65;
 }
 
 .ability-modal-head {

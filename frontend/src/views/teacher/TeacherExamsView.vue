@@ -126,10 +126,6 @@ const getStatusText = (exam: any) => {
 }
 
 const getKnowledgePoints = (exam: any) => {
-  const points = Array.isArray(exam?.knowledge_points)
-    ? exam.knowledge_points.map((item: any) => String(item || '').trim()).filter((item: string) => Boolean(item))
-    : []
-  if (points.length > 0) return points
   return [String(exam?.subject || '未分类知识点')]
 }
 

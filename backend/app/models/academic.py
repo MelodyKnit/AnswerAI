@@ -40,17 +40,3 @@ class ClassStudent(Base):
     joined_at: Mapped[datetime] = mapped_column(default=utcnow)
     status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
-
-
-class KnowledgePoint(Base):
-    __tablename__ = "knowledge_points"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), index=True)
-    parent_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_points.id"), index=True, nullable=True)
-    name: Mapped[str] = mapped_column(String(150), index=True)
-    path: Mapped[str] = mapped_column(String(500), index=True)
-    level: Mapped[int] = mapped_column(Integer, default=1, index=True)
-    sort_order: Mapped[int] = mapped_column(Integer, default=0)
-    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)

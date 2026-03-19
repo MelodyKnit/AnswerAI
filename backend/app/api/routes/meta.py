@@ -1,12 +1,10 @@
-from collections import defaultdict
-
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.core.response import success_response
-from app.models.academic import KnowledgePoint, Subject
+from app.models.academic import Subject
 
 
 router = APIRouter()
@@ -58,27 +56,22 @@ def get_question_types():
 @router.get("/meta/knowledge-points/tree")
 def get_knowledge_tree(subject: str, db: Session = Depends(get_db)):
     """
-    获取 knowledge tree 相关数据。
+    获取知识点树（当前按知识点名=subject名返回一层节点）。
     """
     subject_obj = db.scalar(select(Subject).where(Subject.name == subject))
     if not subject_obj:
         return success_response({"items": []})
 
-    items = db.scalars(select(KnowledgePoint).where(KnowledgePoint.subject_id == subject_obj.id).order_by(KnowledgePoint.level.asc(), KnowledgePoint.sort_order.asc())).all()
-    grouped: dict[int | None, list[dict]] = defaultdict(list)
-    nodes: dict[int, dict] = {}
-    for item in items:
-        nodes[item.id] = {
-            "id": item.id,
-            "name": item.name,
-            "path": item.path,
-            "level": item.level,
-            "children": [],
+    return success_response(
+        {
+            "items": [
+                {
+                    "id": subject_obj.id,
+                    "name": subject_obj.name,
+                    "path": subject_obj.name,
+                    "level": 1,
+                    "children": [],
+                }
+            ]
         }
-        grouped[item.parent_id].append(nodes[item.id])
-
-    for item in items:
-        node = nodes[item.id]
-        node["children"] = grouped.get(item.id, [])
-
-    return success_response({"items": grouped.get(None, [])})
+    )

@@ -115,12 +115,7 @@ const statusText = computed(() => {
 
 const examKnowledgePointsText = computed(() => {
   if (!exam.value) return '未分类知识点'
-  const points = Array.isArray(exam.value?.knowledge_points)
-    ? exam.value.knowledge_points.map((item: any) => String(item || '').trim()).filter((item: string) => Boolean(item))
-    : []
-  if (points.length <= 0) return String(exam.value?.subject || '未分类知识点')
-  if (points.length <= 3) return points.join('、')
-  return `${points.slice(0, 3).join('、')} 等${points.length}个知识点`
+  return String(exam.value?.subject || '未分类知识点')
 })
 
 const canEditSchedule = computed(() => Boolean(exam.value) && effectiveStatus.value !== 'finished')

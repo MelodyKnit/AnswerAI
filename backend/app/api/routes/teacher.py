@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db, require_role
 from app.core.response import success_response
-from app.models.academic import ClassRoom, ClassStudent, KnowledgePoint, Subject
+from app.models.academic import ClassRoom, ClassStudent, Subject
 from app.models.exam import (
     Exam,
     ExamClass,
@@ -21,7 +21,7 @@ from app.models.exam import (
     SubmissionAnswer,
     SubmissionBehaviorEvent,
 )
-from app.models.question import Question, QuestionKnowledgePoint, QuestionOption
+from app.models.question import Question, QuestionOption
 from app.models.user import (
     AITask,
     ReviewItem,
@@ -49,7 +49,10 @@ from app.schemas.teacher import (
     RetakeRequestActionRequest,
     ReviewSubmitRequest,
 )
-from app.services.student_growth_ai import build_growth_ability_profile
+from app.services.student_growth_ai import (
+    build_growth_ability_profile,
+    build_score_trend_summary,
+)
 from app.services.realtime import realtime_events, submission_channel
 from app.services.llm import generate_questions_with_llm
 from app.services.scoring import SUBJECTIVE_TYPES, serialize_answer
@@ -159,7 +162,7 @@ def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
     if weak_points:
         summary_parts.append(f"薄弱点主要集中在 {weak_points[0]['name']} 等知识点。")
     elif weak_question_signals:
-        summary_parts.append("当前题目存在未标注知识点的情况，薄弱知识点暂无法精准定位，建议先补充题目知识点标签。")
+        summary_parts.append("当前样本已识别出高错题，但知识点分布仍需更多作答数据来提升稳定性。")
     if weak_question_signals:
         top_question = weak_question_signals[0]
         summary_parts.append(
@@ -177,7 +180,7 @@ def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
             f"围绕 {weak_points[0]['name']} 组织一次 15 分钟讲评，再配 2 道同类题即时巩固。"
         )
     else:
-        actions.append("先为高错题补齐知识点标签，再按知识点组织分层讲评，避免只按题干描述追踪问题。")
+        actions.append("先提升作答样本量，再按知识点与题型组织分层讲评，避免只按题干描述追踪问题。")
     if weak_question_signals:
         top_question = weak_question_signals[0]
         actions.append(
@@ -900,42 +903,44 @@ def get_class_analysis(
         for row in exam_rows
     ]
 
-    weak_point_rows = db.execute(
+    weak_knowledge_points: list[dict[str, Any]] = []
+
+    subject_rows = db.execute(
         select(
-            KnowledgePoint.name.label("name"),
+            Subject.name.label("name"),
+            func.count(SubmissionAnswer.id).label("question_count"),
             func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).label(
                 "wrong_count"
             ),
         )
         .select_from(SubmissionAnswer)
         .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
-        .join(
-            QuestionKnowledgePoint,
-            QuestionKnowledgePoint.question_id == SubmissionAnswer.question_id,
-        )
-        .join(
-            KnowledgePoint,
-            KnowledgePoint.id == QuestionKnowledgePoint.knowledge_point_id,
-        )
+        .join(Question, Question.id == SubmissionAnswer.question_id)
+        .join(Subject, Subject.id == Question.subject_id)
         .where(
             ExamSubmission.class_id == class_id,
             ExamSubmission.teacher_id == current_user.id,
             ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
         )
-        .group_by(KnowledgePoint.name)
+        .group_by(Subject.name)
         .order_by(
             func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).desc()
         )
         .limit(8)
     ).all()
+
     weak_knowledge_points = [
         {
-            "name": str(row.name or "未命名知识点"),
+            "name": str(row.name or "未分类知识点"),
+            "question_count": int(row.question_count or 0),
             "count": int(row.wrong_count or 0),
-            "source": "knowledge_point",
-            "source_label": "知识点映射",
+            "wrong_rate": round(
+                (int(row.wrong_count or 0) / max(int(row.question_count or 0), 1)), 2
+            ),
+            "source": "subject",
+            "source_label": "知识点聚合",
         }
-        for row in weak_point_rows
+        for row in subject_rows
         if int(row.wrong_count or 0) > 0
     ]
 
@@ -972,7 +977,6 @@ def get_class_analysis(
         for row in type_rows
         if int(row.question_count or 0) > 0
     ]
-
     answer_rows = db.execute(
         select(
             SubmissionAnswer.question_id,
@@ -1331,7 +1335,7 @@ def get_student_detail(
     growth_profile = build_growth_ability_profile(answer_records)
 
     trend: list[dict[str, Any]] = []
-    recent_submissions = submissions[-8:]
+    recent_submissions = submissions[-10:]
     for submission in recent_submissions:
         exam = db.get(Exam, submission.exam_id)
         class_avg = (
@@ -1359,10 +1363,10 @@ def get_student_detail(
             }
         )
 
-    knowledge_rows = db.execute(
+    subject_rows = db.execute(
         select(
-            KnowledgePoint.id,
-            KnowledgePoint.name,
+            Subject.id.label("id"),
+            Subject.name.label("name"),
             func.count(SubmissionAnswer.id).label("question_count"),
             func.sum(case((SubmissionAnswer.is_correct == True, 1), else_=0)).label(
                 "correct_count"
@@ -1373,27 +1377,21 @@ def get_student_detail(
         )
         .select_from(SubmissionAnswer)
         .join(ExamSubmission, SubmissionAnswer.submission_id == ExamSubmission.id)
-        .join(
-            QuestionKnowledgePoint,
-            QuestionKnowledgePoint.question_id == SubmissionAnswer.question_id,
-        )
-        .join(
-            KnowledgePoint,
-            KnowledgePoint.id == QuestionKnowledgePoint.knowledge_point_id,
-        )
+        .join(Question, Question.id == SubmissionAnswer.question_id)
+        .join(Subject, Subject.id == Question.subject_id)
         .where(
             ExamSubmission.student_id == student_id,
             ExamSubmission.teacher_id == current_user.id,
             ExamSubmission.status.in_(["submitted", "completed", "reviewed"]),
         )
-        .group_by(KnowledgePoint.id, KnowledgePoint.name)
+        .group_by(Subject.id, Subject.name)
         .order_by(
             func.sum(case((SubmissionAnswer.is_correct == False, 1), else_=0)).desc(),
             func.count(SubmissionAnswer.id).desc(),
         )
         .limit(8)
     ).all()
-    knowledge_points = [
+    subject_breakdown = [
         {
             "id": row.id,
             "name": row.name,
@@ -1404,7 +1402,7 @@ def get_student_detail(
                 2,
             ),
         }
-        for row in knowledge_rows
+        for row in subject_rows
     ]
 
     question_type_rows = db.execute(
@@ -1506,11 +1504,11 @@ def get_student_detail(
         if latest_submission
         else 0.0
     )
-    momentum = 0.0
-    if len(trend) >= 2:
-        momentum = round(
-            float(trend[-1]["score"] or 0) - float(trend[0]["score"] or 0), 1
-        )
+    trend_summary = build_score_trend_summary(
+        [float(item.get("score") or 0.0) for item in trend],
+        window_size=3,
+    )
+    momentum = float(trend_summary.get("momentum") or 0.0)
 
     strongest_ability = growth_profile.get("ability_profile", [])[:1]
     weakest_ability = sorted(
@@ -1568,8 +1566,9 @@ def get_student_detail(
             },
             "ability_profile": growth_profile.get("ability_profile", []),
             "question_type_distribution": question_types,
-            "knowledge_points": knowledge_points,
+            "subject_breakdown": subject_breakdown,
             "trend": trend,
+            "trend_summary": trend_summary,
             "study_tasks": [
                 {
                     "id": task.id,
@@ -1623,7 +1622,6 @@ def list_questions(
     type: str | None = None,
     difficulty_min: float | None = None,
     difficulty_max: float | None = None,
-    knowledge_point_id: int | None = None,
     keyword: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -1646,11 +1644,6 @@ def list_questions(
         query = query.where(Question.difficulty <= difficulty_max)
     if keyword:
         query = query.where(Question.stem.contains(keyword))
-    if knowledge_point_id:
-        query = query.join(
-            QuestionKnowledgePoint, QuestionKnowledgePoint.question_id == Question.id
-        ).where(QuestionKnowledgePoint.knowledge_point_id == knowledge_point_id)
-
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     items = db.scalars(
         query.order_by(Question.created_at.desc())
@@ -1725,9 +1718,7 @@ def create_question(
     db.add(question)
     db.commit()
     db.refresh(question)
-    _replace_question_relations(
-        db, question.id, payload.options, payload.knowledge_point_ids
-    )
+    _replace_question_relations(db, question.id, payload.options)
     return success_response(
         {"question": _serialize_question(db, question)}, "question created"
     )
@@ -1750,7 +1741,6 @@ def update_question(
     data = payload.model_dump(exclude_none=True)
     subject_name = data.pop("subject", None)
     options = data.pop("options", None)
-    knowledge_point_ids = data.pop("knowledge_point_ids", None)
     answer = data.pop("answer", None)
     ability_tags = data.pop("ability_tags", None)
     if subject_name:
@@ -1765,8 +1755,8 @@ def update_question(
         setattr(question, field, value)
     db.add(question)
     db.commit()
-    if options is not None or knowledge_point_ids is not None:
-        _replace_question_relations(db, question.id, options, knowledge_point_ids)
+    if options is not None:
+        _replace_question_relations(db, question.id, options)
     db.refresh(question)
     return success_response(
         {"question": _serialize_question(db, question)}, "question updated"
@@ -1801,9 +1791,6 @@ def delete_question(
         )
 
     db.query(QuestionOption).filter(QuestionOption.question_id == question.id).delete()
-    db.query(QuestionKnowledgePoint).filter(
-        QuestionKnowledgePoint.question_id == question.id
-    ).delete()
     db.delete(question)
 
     for exam_id in set(affected_exam_ids):
@@ -3315,19 +3302,6 @@ def _serialize_question(db: Session, question: Question) -> dict:
         .where(QuestionOption.question_id == question.id)
         .order_by(QuestionOption.sort_order.asc())
     ).all()
-    knowledge_links = db.scalars(
-        select(QuestionKnowledgePoint).where(
-            QuestionKnowledgePoint.question_id == question.id
-        )
-    ).all()
-    knowledge_ids = [item.knowledge_point_id for item in knowledge_links]
-    knowledge_points = (
-        db.scalars(
-            select(KnowledgePoint).where(KnowledgePoint.id.in_(knowledge_ids))
-        ).all()
-        if knowledge_ids
-        else []
-    )
     subject = db.get(Subject, question.subject_id)
     extra_meta = question.extra_meta or {}
     return {
@@ -3342,9 +3316,6 @@ def _serialize_question(db: Session, question: Question) -> dict:
         "analysis": question.analysis,
         "score": float(question.score),
         "difficulty": question.difficulty,
-        "knowledge_points": [
-            {"id": item.id, "name": item.name} for item in knowledge_points
-        ],
         "ability_tags": extra_meta.get("ability_tags", []),
         "created_by": question.created_by,
         "created_at": question.created_at.isoformat(),
@@ -3378,16 +3349,6 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
         )
         or 0
     )
-    knowledge_points = db.scalars(
-        select(func.distinct(Subject.name))
-        .select_from(ExamQuestion)
-        .join(Question, Question.id == ExamQuestion.question_id)
-        .join(Subject, Subject.id == Question.subject_id)
-        .where(ExamQuestion.exam_id == exam.id)
-        .order_by(Subject.name.asc())
-    ).all()
-    knowledge_points = [str(item) for item in knowledge_points if str(item).strip()]
-
     def as_utc_iso(dt: datetime) -> str:
         if dt.tzinfo is None:
             return dt.replace(tzinfo=UTC).isoformat().replace("+00:00", "Z")
@@ -3397,7 +3358,6 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
         "id": exam.id,
         "title": exam.title,
         "subject": subject.name if subject else None,
-        "knowledge_points": knowledge_points,
         "duration_minutes": exam.duration_minutes,
         "total_score": float(exam.total_score),
         "status": exam.status,
@@ -3748,9 +3708,7 @@ def _payload_get(item, key: str, default=None):
     return getattr(item, key, default)
 
 
-def _replace_question_relations(
-    db: Session, question_id: int, options, knowledge_point_ids
-) -> None:
+def _replace_question_relations(db: Session, question_id: int, options) -> None:
     """
     处理  replace question relations 请求并返回结果。
     """
@@ -3767,16 +3725,6 @@ def _replace_question_relations(
                     option_key=option_key,
                     content=option_content,
                     sort_order=index,
-                )
-            )
-    if knowledge_point_ids is not None:
-        db.query(QuestionKnowledgePoint).filter(
-            QuestionKnowledgePoint.question_id == question_id
-        ).delete()
-        for knowledge_point_id in knowledge_point_ids:
-            db.add(
-                QuestionKnowledgePoint(
-                    question_id=question_id, knowledge_point_id=knowledge_point_id
                 )
             )
     db.commit()

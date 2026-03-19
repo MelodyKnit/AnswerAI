@@ -190,7 +190,7 @@
 - `risk_distribution`: 高风险/预警/稳定人数分布。
 - `score_distribution`: 分段成绩分布。
 - `exam_trend`: 最近考试趋势。
-- `weak_knowledge_points`: 薄弱知识点统计。
+- `weak_knowledge_points`: 薄弱知识点统计（当前按 `subject` 聚合）。
 - `question_type_performance`: 各题型表现。
 - `focus_students`: 重点关注学生列表。
 - `student_risks`: 学生风险列表。
@@ -259,7 +259,6 @@
 | type | string | 题型编码 |
 | difficulty_min | number | 难度下限 |
 | difficulty_max | number | 难度上限 |
-| knowledge_point_id | integer | 知识点 ID |
 | keyword | string | 题干关键字 |
 | page | integer | 页码 |
 | page_size | integer | 每页数量 |
@@ -299,20 +298,19 @@
 | analysis | string | 否 | 解析 |
 | score | number | 是 | 分值 |
 | difficulty | number | 否 | 难度 |
-| knowledge_point_ids | array | 否 | 知识点 ID 列表 |
 | ability_tags | array | 否 | 能力标签 |
 
 说明：
 
 - `answer` 会被后端统一序列化保存。
 - `ability_tags` 存入 `extra_meta`。
-- 题目创建后会同步重建选项和知识点关联。
+- 题目创建后会同步重建选项信息。
 
 ### POST /teacher/questions/update
 
 更新题目，支持部分字段更新。
 
-除 `question_id` 外，其余字段均可选；传了 `options` 或 `knowledge_point_ids` 时会重建对应关联。
+除 `question_id` 外，其余字段均可选；传了 `options` 时会重建选项。
 
 ### POST /teacher/questions/delete
 
@@ -329,7 +327,7 @@
 实现细节：
 
 1. 若题目已被试卷引用，会先删除 `ExamQuestion` 关联。
-2. 删除题目选项和题目知识点关系。
+2. 删除题目选项。
 3. 若某场试卷因此变成“无有效题目”，会触发该试卷关联学习任务清理。
 
 ### POST /teacher/questions/import
@@ -367,7 +365,7 @@
 | grade_name | string | 否 | 年级 |
 | question_type | string | 是 | 题型 |
 | requirement | string | 是 | 生成要求 |
-| knowledge_points | array | 否 | 知识点关键词 |
+| focus_topics | array | 否 | 聚焦主题关键词（如题型/能力点/章节主题） |
 | difficulty | number | 否 | 难度 |
 | count | integer | 否 | 题目数量，默认 1 |
 | with_analysis | boolean | 否 | 是否生成解析 |

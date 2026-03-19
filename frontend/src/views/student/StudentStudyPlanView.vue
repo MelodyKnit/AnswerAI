@@ -123,21 +123,26 @@ const showReadinessScoreExplain = async () => {
   const completedCount = Number(overview?.completed_count || 0)
   const score = Number(overview?.readiness_score || 0)
   const base = Number(formula?.base ?? 100)
-  const activePenalty = Number(formula?.active_penalty_per_task ?? 6)
-  const completedBonus = Number(formula?.completed_bonus_per_task ?? 4)
-  const minScore = Number(formula?.min_score ?? 45)
-  const maxScore = Number(formula?.max_score ?? 95)
+  const pendingPenalty = Number(formula?.pending_penalty_per_task ?? 8)
+  const inProgressPenalty = Number(formula?.in_progress_penalty_per_task ?? 5)
+  const ignoredPenalty = Number(formula?.ignored_penalty_per_task ?? 2)
+  const completedBonus = Number(formula?.completed_bonus_per_task ?? 3)
+  const minScore = Number(formula?.min_score ?? 0)
+  const maxScore = Number(formula?.max_score ?? 100)
+  const pendingCount = Number(overview?.active_task_count || 0) - Number(tasks.value.filter((item) => item.status === 'in_progress').length)
+  const inProgressCount = Number(tasks.value.filter((item) => item.status === 'in_progress').length)
+  const ignoredCount = Number(overview?.ignored_count || 0)
 
-  const rawScore = base - activeCount * activePenalty + completedCount * completedBonus
+  const rawScore = Number(formula?.raw_score ?? (base + completedCount * completedBonus - Math.max(0, pendingCount) * pendingPenalty - inProgressCount * inProgressPenalty - ignoredCount * ignoredPenalty))
   const message = [
     `当前学习状态（AI评估）：${score}/100`,
     '',
     '计算方式：',
-    `1. ${formula?.expression || '评分 = clamp(45, 95, 100 - 待推进任务数×6 + 已完成任务数×4)'}`,
-    `2. 原始值 = ${base} - ${activeCount}×${activePenalty} + ${completedCount}×${completedBonus} = ${rawScore}`,
+    `1. ${formula?.expression || '评分 = clamp(0, 100, 60 + 已完成任务数×3 - 待开始任务数×8 - 进行中任务数×5 - 已忽略任务数×2)'}`,
+    `2. 原始值 = ${base} + ${completedCount}×${completedBonus} - ${Math.max(0, pendingCount)}×${pendingPenalty} - ${inProgressCount}×${inProgressPenalty} - ${ignoredCount}×${ignoredPenalty} = ${rawScore}`,
     `3. 限制区间 [${minScore}, ${maxScore}]，最终得分 = ${score}`,
     '',
-    `统计口径：待推进任务 ${activeCount} 个，已完成任务 ${completedCount} 个。`,
+    `统计口径：待推进任务 ${activeCount} 个，已完成任务 ${completedCount} 个，已忽略任务 ${ignoredCount} 个。`,
   ].join('\n')
 
   await ui.alert(message, {

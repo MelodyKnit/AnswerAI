@@ -120,7 +120,6 @@ class StudyTask(Base):
     student_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     title: Mapped[str] = mapped_column(String(200))
     task_type: Mapped[str] = mapped_column(String(50), index=True)
-    knowledge_point_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_points.id"), nullable=True, index=True)
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     estimated_minutes: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
@@ -167,18 +166,4 @@ class ClassAnalysisSnapshot(Base):
     exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id"), index=True)
     analysis_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ai_conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
-
-
-class KnowledgeMasterySnapshot(Base):
-    __tablename__ = "knowledge_mastery_snapshots"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    owner_type: Mapped[str] = mapped_column(String(20), index=True)
-    owner_id: Mapped[int] = mapped_column(index=True)
-    subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), index=True)
-    knowledge_point_id: Mapped[int] = mapped_column(ForeignKey("knowledge_points.id"), index=True)
-    mastery_score: Mapped[float] = mapped_column(Float, default=0, index=True)
-    wrong_count: Mapped[int] = mapped_column(Integer, default=0)
-    source_exam_id: Mapped[int | None] = mapped_column(ForeignKey("exams.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

@@ -35,7 +35,6 @@ class QuestionCreateRequest(BaseModel):
     analysis: str | None = None
     score: float
     difficulty: float | None = None
-    knowledge_point_ids: list[int] = []
     ability_tags: list[str] = []
 
 
@@ -49,7 +48,6 @@ class QuestionUpdateRequest(BaseModel):
     analysis: str | None = None
     score: float | None = None
     difficulty: float | None = None
-    knowledge_point_ids: list[int] | None = None
     ability_tags: list[str] | None = None
 
 
@@ -69,7 +67,7 @@ class AIQuestionGenerateRequest(BaseModel):
     grade_name: str | None = None
     question_type: str
     requirement: str
-    knowledge_points: list[str] = []
+    focus_topics: list[str] = []
     difficulty: float | None = None
     count: int = 1
     with_analysis: bool = True

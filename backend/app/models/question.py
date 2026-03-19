@@ -35,14 +35,3 @@ class QuestionOption(Base):
     content: Mapped[str] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
-
-
-class QuestionKnowledgePoint(Base):
-    __tablename__ = "question_knowledge_points"
-    __table_args__ = (UniqueConstraint("question_id", "knowledge_point_id", name="uq_question_knowledge"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    question_id: Mapped[int] = mapped_column(ForeignKey("questions.id"), index=True)
-    knowledge_point_id: Mapped[int] = mapped_column(ForeignKey("knowledge_points.id"), index=True)
-    weight: Mapped[float] = mapped_column(Float, default=1.0)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)

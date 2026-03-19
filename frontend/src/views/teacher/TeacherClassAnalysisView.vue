@@ -32,18 +32,43 @@ const percentText = (value: number) => `${Math.round(Number(value || 0))}%`
 const formatScore = (value: number) => Number(value || 0).toFixed(1)
 const riskLabel = (value: string) => value === 'high' ? '高危' : value === 'medium' ? '预警' : '稳定'
 const riskTone = (value: string) => value === 'high' ? 'danger' : value === 'medium' ? 'warn' : 'safe'
-const weakPointSourceHint = (item: any) => {
-  const source = String(item?.source || '').toLowerCase()
-  if (source === 'knowledge_point') return '依据题目绑定的知识点统计错误样本。'
-  return '知识点来源未标注，请检查题目元数据。'
+const weakPointRate = (item: any) => {
+  const rate = Number(item?.wrong_rate)
+  if (Number.isFinite(rate) && rate >= 0) return rate
+  const total = Number(item?.question_count || 0)
+  if (total <= 0) return 0
+  return Number(item?.count || 0) / total
 }
+const weakKnowledgePointCards = computed(() => {
+  return weakKnowledgePoints.value.map((item, index) => {
+    const rate = weakPointRate(item)
+    const wrongCount = Number(item?.count || 0)
+    let priorityLabel = '一般'
+    let priorityTone = 'normal'
+
+    if (index < 3 || rate >= 0.3 || wrongCount >= 120) {
+      priorityLabel = '重点关注'
+      priorityTone = 'high'
+    } else if (rate >= 0.2 || wrongCount >= 70) {
+      priorityLabel = '持续跟踪'
+      priorityTone = 'mid'
+    }
+
+    return {
+      ...item,
+      rate,
+      priorityLabel,
+      priorityTone,
+    }
+  })
+})
 
 const overview = computed(() => classAnalysis.value?.overview)
 const highRiskCount = computed(() => Number(riskDistribution.value.find((item) => item.level === 'high')?.count || 0))
 const mediumRiskCount = computed(() => Number(riskDistribution.value.find((item) => item.level === 'medium')?.count || 0))
 const lowRiskCount = computed(() => Number(riskDistribution.value.find((item) => item.level === 'low')?.count || 0))
 const hasStructuredWeakPoint = computed(() => weakKnowledgePoints.value.length > 0)
-const topWeakPoint = computed(() => weakKnowledgePoints.value[0]?.name || '知识点待补充标注')
+const topWeakPoint = computed(() => weakKnowledgePoints.value[0]?.name || '知识点数据积累中')
 const topWeakType = computed(() => questionTypePerformance.value[0])
 const latestTrend = computed(() => examTrend.value[examTrend.value.length - 1] || null)
 const classHealthScore = computed(() => {
@@ -69,7 +94,7 @@ const summaryBadges = computed(() => {
   if (hasStructuredWeakPoint.value) {
     items.push(`薄弱点：${topWeakPoint.value}`)
   } else {
-    items.push('薄弱点：待补充知识点标签')
+    items.push('薄弱点：待积累知识点样本')
   }
   if (topWeakType.value) items.push(`高错题型：${topWeakType.value.label}`)
   if (latestTrend.value) items.push(`最近一次提交率 ${percentText(latestTrend.value.submission_rate)}`)
@@ -121,7 +146,7 @@ const prioritySignals = computed(() => {
       suffix: '',
       description: hasStructuredWeakPoint.value
         ? '建议优先围绕该主题安排短讲评与同类题巩固'
-        : '当前题目知识点标签不足，建议先在题库补齐知识点映射',
+        : '当前样本不足，建议先补充测验作答数据',
       tone: 'warn',
     },
     {
@@ -457,21 +482,32 @@ const goStudentProfile = (studentId: number) => {
               <h3>薄弱知识点</h3>
             </div>
           </div>
-          <p class="weak-point-tip">用于回答“班级现在主要薄弱在哪”，每条都标注了分析来源。</p>
+          <p class="weak-point-tip">按知识点统计：错题次数=该知识点答错总数；错率=错题次数/该知识点作答次数。已自动标出优先处理项。</p>
           <div v-if="weakKnowledgePoints.length" class="bar-list">
-            <div v-for="item in weakKnowledgePoints" :key="item.name" class="bar-row vertical">
+            <div v-for="(item, index) in weakKnowledgePointCards" :key="item.name" class="bar-row vertical weak-point-row">
               <div class="weak-point-main">
-                <p class="bar-label truncate">{{ item.name }}</p>
-                <span class="weak-point-source">{{ item.source_label || '综合归纳' }}</span>
+                <div class="weak-point-title-row">
+                  <p class="bar-label truncate">
+                    <span class="weak-point-rank">TOP {{ index + 1 }}</span>
+                    <span>{{ item.name }}</span>
+                  </p>
+                  <span class="weak-point-priority" :class="`tone-${item.priorityTone}`">{{ item.priorityLabel }}</span>
+                </div>
+                <div class="weak-point-progress">
+                  <div class="bar-track">
+                    <div class="bar-fill point-fill" :style="{ width: `${(Number(item.count || 0) / weakPointMax) * 100}%` }"></div>
+                  </div>
+                  <strong class="weak-point-value">{{ item.count }}<span>次错题</span></strong>
+                </div>
+                <div class="weak-point-metrics">
+                  <span class="weak-metric-chip">作答 {{ Number(item.question_count || 0) }}</span>
+                  <span class="weak-metric-chip">错题 {{ Number(item.count || 0) }}</span>
+                  <span class="weak-metric-chip">错率 {{ percentText(item.rate * 100) }}</span>
+                </div>
               </div>
-              <div class="bar-track">
-                <div class="bar-fill point-fill" :style="{ width: `${(Number(item.count || 0) / weakPointMax) * 100}%` }"></div>
-              </div>
-              <strong>{{ item.count }} 次</strong>
-              <small class="weak-point-hint">{{ weakPointSourceHint(item) }}</small>
             </div>
           </div>
-          <div v-else class="empty-copy">当前题目缺少知识点标注，暂无法生成可信的“薄弱知识点”。建议先在题库为高频错题补充知识点标签。</div>
+          <div v-else class="empty-copy">当前暂无稳定薄弱知识点，建议先增加测验样本后再观察趋势。</div>
         </article>
 
         <article class="panel-card">
@@ -1226,14 +1262,47 @@ const goStudentProfile = (studentId: number) => {
 }
 
 .bar-row.vertical {
-  grid-template-columns: minmax(120px, 1fr) minmax(0, 1fr) auto;
-  row-gap: 4px;
+  grid-template-columns: 1fr;
+  row-gap: 0;
+}
+
+.weak-point-row {
+  border: 1px solid #dfe7e2;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fbfa 100%);
+  padding: 12px 13px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 0 rgba(16, 24, 40, 0.03);
+}
+
+.weak-point-row:last-child {
+  margin-bottom: 0;
 }
 
 .weak-point-main {
   min-width: 0;
   display: grid;
-  gap: 4px;
+  gap: 10px;
+}
+
+.weak-point-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weak-point-rank {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: #3f6a57;
+  background: #e9f4ee;
+  border: 1px solid #cfe2d8;
+  border-radius: 999px;
+  padding: 2px 6px;
+  margin-right: 6px;
 }
 
 .bar-label {
@@ -1248,23 +1317,95 @@ const goStudentProfile = (studentId: number) => {
   color: #678074;
 }
 
-.weak-point-source {
-  display: inline-flex;
-  width: fit-content;
-  font-size: 11px;
-  color: #4f6f61;
-  background: #edf7f2;
-  border: 1px solid #d8e9df;
-  border-radius: 999px;
-  padding: 2px 8px;
+.weak-point-metric {
+  margin: 0;
+  font-size: 12px;
+  color: #66798a;
+  line-height: 1.55;
 }
 
-.weak-point-hint {
-  grid-column: 1 / -1;
-  margin: 0;
+.weak-point-metric--secondary {
+  color: #7e8f9f;
+}
+
+.weak-point-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.weak-point-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.weak-metric-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #4d6072;
+  background: #f1f5f3;
+  border: 1px solid #dde6e1;
+}
+
+.weak-point-priority {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 11px;
-  color: #758697;
-  line-height: 1.45;
+  line-height: 1;
+  border-radius: 999px;
+  padding: 4px 8px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.weak-point-priority.tone-high {
+  color: #8f3f31;
+  background: #fce9e5;
+  border-color: #f5c3b8;
+}
+
+.weak-point-priority.tone-mid {
+  color: #8a6330;
+  background: #fcf4e7;
+  border-color: #f3ddbb;
+}
+
+.weak-point-priority.tone-normal {
+  color: #4f6f61;
+  background: #edf7f2;
+  border-color: #d8e9df;
+}
+
+.weak-point-value {
+  font-size: 30px;
+  line-height: 1;
+  color: #1f2937;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.weak-point-value span {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .weak-point-row {
+    padding: 12px;
+  }
+
+  .weak-point-value {
+    font-size: 28px;
+  }
 }
 
 .truncate {

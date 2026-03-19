@@ -67,7 +67,7 @@ export interface TeacherStudentPortrait {
     question_count: number
     accuracy: number
   }>
-  knowledge_points: Array<{
+  subject_breakdown: Array<{
     id: number
     name: string
     question_count: number
@@ -83,6 +83,14 @@ export interface TeacherStudentPortrait {
     class_avg: number
     ranking_in_class?: number | null
   }>
+  trend_summary?: {
+    window_size: number
+    sample_count: number
+    start_avg: number
+    recent_avg: number
+    momentum: number
+    direction: 'up' | 'down' | 'flat' | string
+  }
   study_tasks: Array<{
     id: number
     title: string
@@ -180,7 +188,9 @@ export interface TeacherClassAnalysis {
   weak_knowledge_points: Array<{
     name: string
     count: number
-    source?: 'knowledge_point' | 'stem_keyword' | 'question_type' | string
+    question_count?: number
+    wrong_rate?: number
+    source?: 'knowledge_point' | 'stem_keyword' | 'question_type' | 'subject' | string
     source_label?: string
   }>
   weak_question_signals: Array<{
@@ -283,7 +293,7 @@ export const getStudentDetail = (student_id: number) => {
 
 export const getQuestions = (params?: {
   subject?: string, type?: string, difficulty_min?: number, difficulty_max?: number,
-  knowledge_point_id?: number, keyword?: string, page?: number, page_size?: number
+  keyword?: string, page?: number, page_size?: number
 }) => {
   return http.get('/teacher/questions', { params })
 }

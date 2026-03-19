@@ -1,27 +1,37 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.academic import KnowledgePoint, Subject
+from app.models.academic import Subject
 from app.models.exam import Exam, ExamSubmission, SubmissionAnswer
-from app.models.question import QuestionKnowledgePoint
+from app.models.question import Question
 from app.models.user import StudentProfileSnapshot, StudyPlan, StudyTask
 
 
 def build_submission_analysis(db: Session, submission: ExamSubmission, exam: Exam) -> dict:
     """
-    处理 build submission analysis 请求并返回结果。
+    基于真实错题生成学情快照（知识点=subject维度）。
     """
-    answers = db.scalars(select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id)).all()
+    answers = db.scalars(
+        select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id)
+    ).all()
     wrong_answers = [item for item in answers if item.is_correct is False]
-    knowledge_counter: dict[int, int] = {}
-    for answer in wrong_answers:
-        for relation in db.scalars(select(QuestionKnowledgePoint).where(QuestionKnowledgePoint.question_id == answer.question_id)).all():
-            knowledge_counter[relation.knowledge_point_id] = knowledge_counter.get(relation.knowledge_point_id, 0) + 1
 
-    weak_knowledge_points = []
-    for knowledge_id, wrong_count in sorted(knowledge_counter.items(), key=lambda item: item[1], reverse=True)[:5]:
-        knowledge = db.get(KnowledgePoint, knowledge_id)
-        weak_knowledge_points.append({"id": knowledge_id, "name": knowledge.name if knowledge else None, "wrong_count": wrong_count})
+    wrong_subject_counter: dict[str, int] = {}
+    for answer in wrong_answers:
+        question = db.get(Question, int(answer.question_id))
+        subject_name = ""
+        if question and question.subject_id:
+            subject_obj = db.get(Subject, int(question.subject_id))
+            subject_name = str(subject_obj.name or "").strip() if subject_obj else ""
+        label = subject_name or "未分类知识点"
+        wrong_subject_counter[label] = wrong_subject_counter.get(label, 0) + 1
+
+    weak_knowledge_points = [
+        {"id": index + 1, "name": name, "wrong_count": count}
+        for index, (name, count) in enumerate(
+            sorted(wrong_subject_counter.items(), key=lambda item: item[1], reverse=True)[:5]
+        )
+    ]
 
     analysis = {
         "exam_id": exam.id,
@@ -31,6 +41,7 @@ def build_submission_analysis(db: Session, submission: ExamSubmission, exam: Exa
         "correct_rate": submission.correct_rate,
         "weak_knowledge_points": weak_knowledge_points,
     }
+
     existing_snapshots = db.scalars(
         select(StudentProfileSnapshot).where(
             StudentProfileSnapshot.student_id == submission.student_id,
@@ -46,7 +57,7 @@ def build_submission_analysis(db: Session, submission: ExamSubmission, exam: Exa
         subject_id=exam.subject_id,
         source_exam_id=exam.id,
         profile_json=analysis,
-        ai_summary="AI 已根据错题与知识点分布生成本次学情快照。",
+        ai_summary="AI 已根据错题分布生成本次学情快照。",
     )
     db.add(snapshot)
     db.commit()
@@ -57,11 +68,14 @@ def build_submission_analysis(db: Session, submission: ExamSubmission, exam: Exa
 
 def generate_study_plan(db: Session, submission: ExamSubmission, exam: Exam) -> dict:
     """
-    处理 generate study plan 请求并返回结果。
+    基于错题生成考后补强学习计划（知识点=subject维度，不依赖知识点表）。
     """
     subject = db.get(Subject, exam.subject_id)
     wrong_answers = db.scalars(
-        select(SubmissionAnswer).where(SubmissionAnswer.submission_id == submission.id, SubmissionAnswer.is_correct.is_(False))
+        select(SubmissionAnswer).where(
+            SubmissionAnswer.submission_id == submission.id,
+            SubmissionAnswer.is_correct.is_(False),
+        )
     ).all()
 
     existing_plan_ids = db.scalars(
@@ -71,8 +85,12 @@ def generate_study_plan(db: Session, submission: ExamSubmission, exam: Exam) -> 
         )
     ).all()
     if existing_plan_ids:
-        db.query(StudyTask).filter(StudyTask.plan_id.in_(existing_plan_ids)).delete(synchronize_session=False)
-        db.query(StudyPlan).filter(StudyPlan.id.in_(existing_plan_ids)).delete(synchronize_session=False)
+        db.query(StudyTask).filter(StudyTask.plan_id.in_(existing_plan_ids)).delete(
+            synchronize_session=False
+        )
+        db.query(StudyPlan).filter(StudyPlan.id.in_(existing_plan_ids)).delete(
+            synchronize_session=False
+        )
         db.flush()
 
     plan = StudyPlan(
@@ -89,39 +107,31 @@ def generate_study_plan(db: Session, submission: ExamSubmission, exam: Exam) -> 
     db.refresh(plan)
 
     created_tasks: list[dict] = []
-    knowledge_counter: dict[int, int] = {}
-    unmatched_wrong_count = 0
+    wrong_subject_counter: dict[str, int] = {}
     for answer in wrong_answers:
-        relation_ids = db.scalars(
-            select(QuestionKnowledgePoint.knowledge_point_id).where(QuestionKnowledgePoint.question_id == answer.question_id)
-        ).all()
-        if not relation_ids:
-            unmatched_wrong_count += 1
-            continue
-        for knowledge_id in relation_ids:
-            knowledge_counter[knowledge_id] = knowledge_counter.get(knowledge_id, 0) + 1
+        question = db.get(Question, int(answer.question_id))
+        subject_name = ""
+        if question and question.subject_id:
+            subject_obj = db.get(Subject, int(question.subject_id))
+            subject_name = str(subject_obj.name or "").strip() if subject_obj else ""
+        key = subject_name or "未分类知识点"
+        wrong_subject_counter[key] = wrong_subject_counter.get(key, 0) + 1
 
-    sorted_knowledge_ids = sorted(knowledge_counter.items(), key=lambda item: item[1], reverse=True)[:3]
-    for index, (knowledge_id, wrong_count) in enumerate(sorted_knowledge_ids, start=1):
-        knowledge = db.get(KnowledgePoint, knowledge_id)
+    sorted_subjects = sorted(wrong_subject_counter.items(), key=lambda item: item[1], reverse=True)[:3]
+    for index, (subject_label, wrong_count) in enumerate(sorted_subjects, start=1):
         task = StudyTask(
             plan_id=plan.id,
             student_id=submission.student_id,
-            title=f"复习知识点：{knowledge.name}" if knowledge else "知识点复习",
+            title=f"复习知识点：{subject_label}",
             task_type="knowledge_review",
-            knowledge_point_id=knowledge_id,
             priority=index,
             estimated_minutes=min(35, 15 + wrong_count * 5),
             status="pending",
-            feedback=(
-                f"本次考试在“{knowledge.name}”相关题上出现 {wrong_count} 次错误，建议先看解析，再完成 2 道同类型训练题。"
-                if knowledge
-                else "AI 建议先看解析，再完成 2 道同类型训练题。"
-            ),
+            feedback=f"本次考试在“{subject_label}”上出现 {wrong_count} 次错误，建议先看解析，再完成 2 道同类型训练题。",
         )
         db.add(task)
         db.flush()
-        created_tasks.append({"task_id": task.id, "title": task.title, "knowledge_point_id": task.knowledge_point_id})
+        created_tasks.append({"task_id": task.id, "title": task.title})
 
     if wrong_answers:
         aggregated_wrong_task = StudyTask(
@@ -129,19 +139,14 @@ def generate_study_plan(db: Session, submission: ExamSubmission, exam: Exam) -> 
             student_id=submission.student_id,
             title=f"集中回顾错题（{len(wrong_answers)}题）",
             task_type="wrong_question_review",
-            knowledge_point_id=None,
             priority=max(1, len(created_tasks) + 1),
             estimated_minutes=min(40, max(15, len(wrong_answers) * 6)),
             status="pending",
-            feedback=(
-                f"本次考试共有 {len(wrong_answers)} 道错题，建议先完成解析复盘，再做 2-3 道同类变式题。"
-                if unmatched_wrong_count <= 0
-                else f"本次考试共有 {len(wrong_answers)} 道错题，其中 {unmatched_wrong_count} 题未归入知识点，请优先做集中错题回顾。"
-            ),
+            feedback=f"本次考试共有 {len(wrong_answers)} 道错题，建议先完成解析复盘，再做 2-3 道同类变式题。",
         )
         db.add(aggregated_wrong_task)
         db.flush()
-        created_tasks.append({"task_id": aggregated_wrong_task.id, "title": aggregated_wrong_task.title, "knowledge_point_id": None})
+        created_tasks.append({"task_id": aggregated_wrong_task.id, "title": aggregated_wrong_task.title})
 
     if not created_tasks:
         task = StudyTask(
@@ -156,7 +161,7 @@ def generate_study_plan(db: Session, submission: ExamSubmission, exam: Exam) -> 
         )
         db.add(task)
         db.flush()
-        created_tasks.append({"task_id": task.id, "title": task.title, "knowledge_point_id": None})
+        created_tasks.append({"task_id": task.id, "title": task.title})
 
     db.commit()
     return {"plan_id": plan.id, "title": plan.title, "tasks": created_tasks}

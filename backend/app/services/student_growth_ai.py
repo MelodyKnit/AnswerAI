@@ -278,6 +278,43 @@ def build_growth_ability_profile(
     }
 
 
+def build_score_trend_summary(scores: list[float], window_size: int = 3) -> dict[str, Any]:
+    """
+    统一成绩趋势口径：趋势变化=最近N次均分-最早N次均分。
+    """
+    normalized_scores = [float(item or 0.0) for item in scores]
+    total = len(normalized_scores)
+    if total == 0:
+        return {
+            "window_size": 0,
+            "sample_count": 0,
+            "start_avg": 0.0,
+            "recent_avg": 0.0,
+            "momentum": 0.0,
+            "direction": "flat",
+        }
+
+    window = max(1, min(int(window_size or 1), total))
+    start_avg = sum(normalized_scores[:window]) / window
+    recent_avg = sum(normalized_scores[-window:]) / window
+    momentum = round(recent_avg - start_avg, 1)
+    if momentum >= 1:
+        direction = "up"
+    elif momentum <= -1:
+        direction = "down"
+    else:
+        direction = "flat"
+
+    return {
+        "window_size": window,
+        "sample_count": total,
+        "start_avg": round(start_avg, 1),
+        "recent_avg": round(recent_avg, 1),
+        "momentum": momentum,
+        "direction": direction,
+    }
+
+
 def _select_best_rule(corpus: str, subject: str) -> AbilityRule | None:
     matched = []
     for rule in ABILITY_RULES:
