@@ -128,36 +128,6 @@ def _answer_preview(answer_text: Any, answer_content: Any) -> str:
     return _shorten_text(raw_content, 40)
 
 
-def _extract_stem_keywords(stem: str) -> list[str]:
-    tokens = re.findall(r"[\u4e00-\u9fa5]{2,8}", str(stem or ""))
-    stopwords = {
-        "下列",
-        "以下",
-        "关于",
-        "正确",
-        "错误",
-        "选项",
-        "题目",
-        "选择",
-        "根据",
-        "已知",
-        "请判断",
-        "请作答",
-        "求解",
-        "计算",
-    }
-    output: list[str] = []
-    seen: set[str] = set()
-    for token in tokens:
-        if token in stopwords or token in seen:
-            continue
-        seen.add(token)
-        output.append(token)
-        if len(output) >= 3:
-            break
-    return output
-
-
 def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
     overview = payload["overview"]
     weak_points = payload["weak_knowledge_points"]
@@ -188,6 +158,8 @@ def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
         )
     if weak_points:
         summary_parts.append(f"薄弱点主要集中在 {weak_points[0]['name']} 等知识点。")
+    elif weak_question_signals:
+        summary_parts.append("当前题目存在未标注知识点的情况，薄弱知识点暂无法精准定位，建议先补充题目知识点标签。")
     if weak_question_signals:
         top_question = weak_question_signals[0]
         summary_parts.append(
@@ -204,6 +176,8 @@ def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
         actions.append(
             f"围绕 {weak_points[0]['name']} 组织一次 15 分钟讲评，再配 2 道同类题即时巩固。"
         )
+    else:
+        actions.append("先为高错题补齐知识点标签，再按知识点组织分层讲评，避免只按题干描述追踪问题。")
     if weak_question_signals:
         top_question = weak_question_signals[0]
         actions.append(
@@ -228,6 +202,8 @@ def _build_class_analysis_fallback(payload: dict[str, Any]) -> dict[str, Any]:
     findings: list[str] = []
     if weak_points:
         findings.append(f"高频薄弱点：{weak_points[0]['name']}（错误样本 {weak_points[0]['count']}）。")
+    elif weak_question_signals:
+        findings.append("知识点标注不足：当前高错题存在未绑定知识点，薄弱点定位精度受影响。")
     if weak_question_signals:
         top_question = weak_question_signals[0]
         findings.append(
@@ -1096,39 +1072,7 @@ def get_class_analysis(
     )
     weak_question_signals = weak_question_signals[:8]
 
-    if not weak_knowledge_points:
-        keyword_counter: dict[str, int] = {}
-        for item in weak_question_signals:
-            for keyword in _extract_stem_keywords(str(item.get("stem_source") or "")):
-                keyword_counter[keyword] = keyword_counter.get(keyword, 0) + int(item["wrong_count"])
-        weak_knowledge_points = [
-            {
-                "name": key,
-                "count": value,
-                "source": "stem_keyword",
-                "source_label": "题干关键词",
-            }
-            for key, value in sorted(keyword_counter.items(), key=lambda kv: kv[1], reverse=True)[:6]
-        ]
-
-    if not weak_knowledge_points and question_type_performance:
-        weak_knowledge_points = [
-            {
-                "name": f"{item['label']}能力",
-                "count": max(
-                    1,
-                    int(
-                        round(
-                            float(item.get("wrong_rate", 0)) * float(item.get("question_count", 0))
-                        )
-                    ),
-                ),
-                "source": "question_type",
-                "source_label": "题型归因",
-            }
-            for item in question_type_performance[:4]
-            if float(item.get("wrong_rate", 0)) > 0
-        ]
+    # 仅展示真实知识点映射得到的薄弱点，避免将题干词片段误判为“知识点”。
 
     diagnosis_meta = {
         "blank_answer": {

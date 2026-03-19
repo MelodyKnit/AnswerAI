@@ -35,16 +35,15 @@ const riskTone = (value: string) => value === 'high' ? 'danger' : value === 'med
 const weakPointSourceHint = (item: any) => {
   const source = String(item?.source || '').toLowerCase()
   if (source === 'knowledge_point') return '依据题目绑定的知识点统计错误样本。'
-  if (source === 'stem_keyword') return '题目未绑定知识点，按题干高频关键词归纳。'
-  if (source === 'question_type') return '知识点缺失时按高错题型能力归因。'
-  return '按班级错误样本综合归纳。'
+  return '知识点来源未标注，请检查题目元数据。'
 }
 
 const overview = computed(() => classAnalysis.value?.overview)
 const highRiskCount = computed(() => Number(riskDistribution.value.find((item) => item.level === 'high')?.count || 0))
 const mediumRiskCount = computed(() => Number(riskDistribution.value.find((item) => item.level === 'medium')?.count || 0))
 const lowRiskCount = computed(() => Number(riskDistribution.value.find((item) => item.level === 'low')?.count || 0))
-const topWeakPoint = computed(() => weakKnowledgePoints.value[0]?.name || '暂无明显集中薄弱点')
+const hasStructuredWeakPoint = computed(() => weakKnowledgePoints.value.length > 0)
+const topWeakPoint = computed(() => weakKnowledgePoints.value[0]?.name || '知识点待补充标注')
 const topWeakType = computed(() => questionTypePerformance.value[0])
 const latestTrend = computed(() => examTrend.value[examTrend.value.length - 1] || null)
 const classHealthScore = computed(() => {
@@ -67,7 +66,11 @@ const classHealthHint = computed(() => {
 const summaryBadges = computed(() => {
   const items: string[] = []
   if (overview.value?.exam_count) items.push(`${overview.value.exam_count} 场测验样本`)
-  if (topWeakPoint.value) items.push(`薄弱点：${topWeakPoint.value}`)
+  if (hasStructuredWeakPoint.value) {
+    items.push(`薄弱点：${topWeakPoint.value}`)
+  } else {
+    items.push('薄弱点：待补充知识点标签')
+  }
   if (topWeakType.value) items.push(`高错题型：${topWeakType.value.label}`)
   if (latestTrend.value) items.push(`最近一次提交率 ${percentText(latestTrend.value.submission_rate)}`)
   return items.slice(0, 4)
@@ -116,7 +119,9 @@ const prioritySignals = computed(() => {
       title: '重点薄弱点',
       value: topWeakPoint.value,
       suffix: '',
-      description: '建议优先围绕该主题安排短讲评与同类题巩固',
+      description: hasStructuredWeakPoint.value
+        ? '建议优先围绕该主题安排短讲评与同类题巩固'
+        : '当前题目知识点标签不足，建议先在题库补齐知识点映射',
       tone: 'warn',
     },
     {
@@ -466,7 +471,7 @@ const goStudentProfile = (studentId: number) => {
               <small class="weak-point-hint">{{ weakPointSourceHint(item) }}</small>
             </div>
           </div>
-          <div v-else class="empty-copy">暂无足够知识点数据</div>
+          <div v-else class="empty-copy">当前题目缺少知识点标注，暂无法生成可信的“薄弱知识点”。建议先在题库为高频错题补充知识点标签。</div>
         </article>
 
         <article class="panel-card">
