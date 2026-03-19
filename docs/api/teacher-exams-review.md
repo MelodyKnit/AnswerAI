@@ -45,7 +45,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | title | string | 是 | 考试标题，同一教师下不可重复 |
-| subject | string | 是 | 学科 |
+| subject | string | 否 | 学科；可不传，后端会根据题目推断 |
 | duration_minutes | integer | 是 | 时长 |
 | start_time | datetime | 是 | 开始时间 |
 | end_time | datetime | 是 | 结束时间 |
@@ -57,6 +57,10 @@
 | question_items | array | 是 | 题目数组 |
 
 `question_items` 每项包含：`question_id`、`score`、`order_no`、`section_name`。
+
+说明：
+
+- 当 `subject` 为空时，后端会尝试从 `question_items` 关联题目中推断学科。
 
 常见失败：
 
@@ -81,6 +85,11 @@
 
 - `items`: Exam 对象数组。
 - `total`: 总数。
+
+`items` 中除基础字段外，当前实现还返回：
+
+- `knowledge_points`: 当前试卷题目关联学科名称去重列表。
+- `pending_review_count`: 该考试下待批阅主观题数量。
 
 ### GET /teacher/exams/detail
 
@@ -139,7 +148,7 @@
 
 ### POST /teacher/exams/delete
 
-删除考试。当前仅允许删除 `finished` 状态考试，防止误删进行中的教学任务。
+删除考试。当前仅允许删除 `draft` 或 `finished` 状态考试，`published` 状态会被拒绝，防止误删进行中的教学任务。
 
 删除时会同步清理：
 

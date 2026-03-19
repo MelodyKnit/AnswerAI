@@ -31,6 +31,48 @@
 - `weak_knowledge_points`
 - `coaching_suggestions`
 
+### GET /teacher/feedback/list
+
+教师查看用户反馈列表，支持按分类、关键词和分页筛选。
+
+查询参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| category | string | 可选：`bug`、`product`、`design`、`other` |
+| keyword | string | 可选，按内容、页面路径、用户姓名、邮箱模糊匹配 |
+| page | integer | 页码，默认 1 |
+| page_size | integer | 每页数量，默认 20，最大 100 |
+
+返回结构：
+
+```json
+{
+  "items": [
+    {
+      "id": 1,
+      "category": "bug",
+      "content": "组卷页筛选后题目为空",
+      "images": ["/uploads/feedback-1.png"],
+      "page_path": "/app/teacher/exams/create",
+      "client_role": "teacher",
+      "client_name": "李老师",
+      "client_email": "teacher@example.com",
+      "created_at": "2026-03-16T10:00:00+00:00"
+    }
+  ],
+  "total": 1,
+  "summary": {
+    "bug": 1,
+    "product": 0,
+    "design": 0,
+    "other": 0
+  },
+  "page": 1,
+  "page_size": 20
+}
+```
+
 ## 2. 班级管理
 
 ### GET /teacher/classes
@@ -77,6 +119,37 @@
 
 返回中的 `class.invite_code` 可直接用于学生加入班级。
 
+### POST /teacher/classes/update
+
+更新教师名下班级基础信息。
+
+请求体：
+
+| 字段 | 类型 | 必填 |
+| --- | --- | --- |
+| class_id | integer | 是 |
+| name | string | 是 |
+| grade_name | string | 是 |
+| subject | string | 是 |
+
+说明：
+
+- `name`、`grade_name`、`subject` 会进行去空格后校验，任一为空返回 `400`。
+
+成功返回：
+
+```json
+{
+  "class": {
+    "id": 11,
+    "name": "高一1班",
+    "grade_name": "高一",
+    "subject": "数学",
+    "invite_code": "CLS-ABC123"
+  }
+}
+```
+
 ### GET /teacher/classes/detail
 
 返回班级详情与最近考试数量。
@@ -104,6 +177,28 @@
 | page_size | integer | 每页数量 |
 
 返回中每个学生项包含：`id`、`name`、`email`、`phone`、`grade_name`、`risk_level`。
+
+### GET /teacher/classes/analysis
+
+返回单个班级的学习分析数据，供班级学情看板使用。
+
+查询参数：`class_id`。
+
+返回重点字段：
+
+- `overview`: 班级人数、考试数、均分、平均正确率、完成率。
+- `risk_distribution`: 高风险/预警/稳定人数分布。
+- `score_distribution`: 分段成绩分布。
+- `exam_trend`: 最近考试趋势。
+- `weak_knowledge_points`: 薄弱知识点统计。
+- `question_type_performance`: 各题型表现。
+- `focus_students`: 重点关注学生列表。
+- `student_risks`: 学生风险列表。
+- `ai_insight`: AI 总结与行动建议。
+
+说明：
+
+- 当班级无学生或无有效作答数据时，接口仍返回完整结构，并附带可执行的 `ai_insight.actions` 引导文案。
 
 ### POST /teacher/classes/students/invite
 

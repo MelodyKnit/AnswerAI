@@ -121,6 +121,7 @@ Content-Type: application/json
   "id": 1001,
   "title": "高一数学周测",
   "subject": "数学",
+  "knowledge_points": ["数学"],
   "duration_minutes": 90,
   "total_score": 100,
   "status": "published",
@@ -130,6 +131,7 @@ Content-Type: application/json
   "allow_review": true,
   "random_question_order": false,
   "question_count": 20,
+  "pending_review_count": 6,
   "class_ids": [11, 12],
   "created_by": 21,
   "created_at": "2026-03-16T10:00:00+00:00"

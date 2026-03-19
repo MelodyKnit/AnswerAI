@@ -52,6 +52,11 @@ const getStatusLabel = (exam: any) => {
   return '已结束'
 }
 
+const getPendingReviewCount = (exam: any) => {
+  const count = Number(exam?.pending_review_count ?? 0)
+  return Number.isFinite(count) && count > 0 ? count : 0
+}
+
 const goExamAction = (exam: any) => {
   const status = getEffectiveStatus(exam)
   if (status === 'draft') {
@@ -59,7 +64,11 @@ const goExamAction = (exam: any) => {
     return
   }
   if (status === 'finished') {
-    navigate('/app/teacher/review')
+    if (getPendingReviewCount(exam) > 0) {
+      navigate('/app/teacher/review')
+      return
+    }
+    navigate(`/app/teacher/exams/${exam.id}`)
     return
   }
   navigate(`/app/teacher/exams/${exam.id}`)
@@ -68,8 +77,12 @@ const goExamAction = (exam: any) => {
 const getExamActionText = (exam: any) => {
   const status = getEffectiveStatus(exam)
   if (status === 'draft') return '继续编辑'
-  if (status === 'finished') return '去批阅'
+  if (status === 'finished') return getPendingReviewCount(exam) > 0 ? '去批阅' : '看报告'
   return '看详情'
+}
+
+const isReviewAction = (exam: any) => {
+  return getEffectiveStatus(exam) === 'finished' && getPendingReviewCount(exam) > 0
 }
 
 const navigate = (path: string) => {
@@ -169,7 +182,7 @@ onMounted(() => {
             <span class="status-indicator" :class="{ 'status--active': getEffectiveStatus(exam) === 'published' }">{{ getStatusLabel(exam) }}</span>
             <button
               class="button button--small"
-              :class="{ 'button--ghost': getEffectiveStatus(exam) !== 'finished' }"
+              :class="{ 'button--ghost': !isReviewAction(exam) }"
               @click="goExamAction(exam)"
             >
               {{ getExamActionText(exam) }}

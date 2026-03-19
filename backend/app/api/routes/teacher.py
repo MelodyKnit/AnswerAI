@@ -3110,6 +3110,17 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
         )
         or 0
     )
+    pending_review_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(ReviewItem)
+            .where(
+                ReviewItem.exam_id == exam.id,
+                ReviewItem.review_status == "pending",
+            )
+        )
+        or 0
+    )
     knowledge_points = db.scalars(
         select(func.distinct(Subject.name))
         .select_from(ExamQuestion)
@@ -3139,6 +3150,7 @@ def _serialize_exam(db: Session, exam: Exam) -> dict:
         "allow_review": exam.allow_review,
         "random_question_order": exam.random_question_order,
         "question_count": question_count,
+        "pending_review_count": int(pending_review_count),
         "class_ids": class_ids,
         "created_by": exam.created_by,
         "created_at": exam.created_at.isoformat(),

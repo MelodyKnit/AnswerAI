@@ -176,7 +176,37 @@
 
 - `400`: 原密码错误。
 
-## 6. GET /meta/subjects
+## 6. POST /users/feedback/create
+
+### 提交用户反馈用途
+
+创建一条用户反馈记录，支持文本问题描述与图片证据，后端落库到 AI 任务表中（`type=user_feedback`）。
+
+### 反馈请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| category | string | 是 | 仅允许 `bug`、`product`、`design`、`other` |
+| content | string | 是 | 反馈正文 |
+| images | array | 否 | 图片 URL 列表，最多 6 条 |
+| page_path | string | 否 | 问题发生页面路径 |
+
+### 反馈校验规则
+
+- 空图片地址会被自动忽略。
+- 单条图片地址长度不能超过 500。
+- 图片数量超过 6 会返回 `400`。
+
+### 反馈成功返回
+
+```json
+{
+  "feedback_id": 123,
+  "status": "submitted"
+}
+```
+
+## 7. GET /meta/subjects
 
 ### 学科列表用途
 
@@ -193,7 +223,7 @@
 }
 ```
 
-## 7. GET /meta/grades
+## 8. GET /meta/grades
 
 ### 年级枚举用途
 
@@ -210,7 +240,7 @@
 }
 ```
 
-## 8. GET /meta/question-types
+## 9. GET /meta/question-types
 
 ### 题型枚举用途
 
@@ -227,7 +257,7 @@
 | essay | 简答题 |
 | material | 材料题 |
 
-## 9. GET /meta/knowledge-points/tree
+## 10. GET /meta/knowledge-points/tree
 
 ### 知识点树用途
 
